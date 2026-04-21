@@ -41,11 +41,12 @@ def get_datasizes():
 
 
 class StartParams(BaseModel):
-    algorithm_id: int
-    num_items:    int   = 16
-    speed:        float = 0.10   # 秒/フレーム
-    target:       Optional[int] = None        # None = サーバー側で自動生成
-    data:         Optional[list[int]] = None  # None = サーバー側で乱数生成
+    algorithm_id:   int
+    num_items:      int   = 16
+    speed:          float = 0.10      # 秒/フレーム
+    target:         Optional[int] = None        # 探索対象 (search 用)
+    data:           Optional[list[int]] = None  # 初期データ (search / sort 共用)
+    data_condition: int   = 0         # 0=ランダム 1=昇順 2=降順 3=ほぼ昇順 (sort 用)
 
 
 @app.post("/api/start")
@@ -54,7 +55,21 @@ def start_session(params: StartParams):
         return JSONResponse({"error": "invalid algorithm_id"}, status_code=400)
 
     algo_name, algo_fn, algo_meta = AlgorithmList[params.algorithm_id]
-    generator = algo_fn(params.num_items, params.target, params.data)
+    algo_type = algo_meta.get("type", "search")
+
+    if algo_type == "misc":
+        # misc: num_items だけ渡す (factorial/fibonacci は内部で cap)
+        generator = algo_fn(params.num_items)
+    elif algo_type == "sort":
+        # sort: data_condition と data を渡す (target は不要)
+        generator = algo_fn(
+            params.num_items,
+            data_condition=params.data_condition,
+            data=params.data,
+        )
+    else:
+        # search: target と data を渡す
+        generator = algo_fn(params.num_items, params.target, params.data)
 
     session_id = str(uuid.uuid4())
     sessions[session_id] = {
@@ -74,6 +89,11 @@ def start_session(params: StartParams):
 
 # ---------------------------------------------------------------------------
 # WebSocket  /ws/{session_id}
+# クライアントからの制御メッセージ:
+#   {"action": "set_speed", "speed": 0.05}
+#   {"action": "pause"}
+#   {"action": "resume"}
+#   {"action": "stop"}
 # ---------------------------------------------------------------------------
 
 @app.websocket("/ws/{session_id}")

@@ -1,18 +1,26 @@
 /**
  * app.js  –  パネル管理・メインアプリケーション (ArrayAnimation)
  *
- * 各パネルは独立した WebSocket 接続を持ち、
- * 複数パネルを同時に実行できる。
- * パネルはコンテナ内をフリードラッグで自由に配置できる。
+ * アルゴリズム種別 (meta.type) に応じて UI を切り替える:
+ *   "search" → target 入力あり・データ条件なし
+ *   "sort"   → target 入力なし・データ条件 (ランダム/昇順/降順/…) あり
+ *   "misc"   → target 入力なし・データ条件なし (固定 N)
  */
 
 "use strict";
 
 // ===== グローバル状態 ==============================================
 let algorithms = [];   // [{ id, name, meta }, ...]
-let dataSizes  = [];   // [8, 12, ...]
-let panelSeq   = 0;    // パネル ID 採番
-let zoomLevel  = 1.0;  // パネルコンテナのズーム倍率
+let dataSizes  = [];   // [8, 16, ...]
+let panelSeq   = 0;
+let zoomLevel  = 1.0;
+
+const DATA_CONDITIONS = [
+  { id: 0, name: "ランダム" },
+  { id: 1, name: "昇順" },
+  { id: 2, name: "降順" },
+  { id: 3, name: "ほぼ昇順" },
+];
 
 // ===== スナップ設定 ================================================
 const SNAP_THRESHOLD = 15;
@@ -35,6 +43,12 @@ function _snapValue(val, snapPoints, threshold) {
     if (diff < minDiff) { minDiff = diff; closest = sp; }
   }
   return closest;
+}
+
+/** アルゴリズム ID から meta.type を返す */
+function _algoType(algoId) {
+  const algo = algorithms.find(a => a.id === Number(algoId));
+  return algo?.meta?.type || "search";
 }
 
 // ===== 起動 ========================================================
@@ -68,6 +82,9 @@ function _setupGlobalControls() {
   dataSizes.forEach(s => gSize.appendChild(new Option(String(s), s)));
   gSize.value = 16;
 
+  const gCond = document.getElementById("global-condition");
+  DATA_CONDITIONS.forEach(c => gCond.appendChild(new Option(c.name, c.id)));
+
   const gSpeed    = document.getElementById("global-speed");
   const gSpeedVal = document.getElementById("global-speed-val");
   gSpeed.addEventListener("input", () => {
@@ -76,33 +93,41 @@ function _setupGlobalControls() {
   });
 }
 
-/** 全パネルへグローバル設定を適用（ボタン押下時） */
+/** 全パネルへグローバル設定を適用 */
 function applyGlobalToAll() {
   const size        = Number(document.getElementById("global-size").value);
   const speedSlider = Number(document.getElementById("global-speed").value);
+  const condition   = Number(document.getElementById("global-condition").value);
   let   targetRaw   = document.getElementById("global-target").value.trim();
+  const maxVal      = size >= 200 ? 999 : 99;
 
-  const maxVal = size >= 200 ? 999 : 99;
-
-  // target が空(自動)のときは1つだけ乱数を生成して全パネルで共有
+  // search 向け: target が空なら共通値を生成
   if (targetRaw === "") {
     targetRaw = String(Math.floor(Math.random() * maxVal) + 1);
     document.getElementById("global-target").value = targetRaw;
   }
 
-  // データセットを1回だけ生成して全パネルで共有
+  // search 向け: 共通データを 1 回生成して全パネルで共有
   const sharedValues = Array.from({ length: size },
                                    () => Math.floor(Math.random() * maxVal) + 1);
 
   document.querySelectorAll(".panel").forEach(el => {
     const panel = el._panel;
     if (!panel) return;
-    el.querySelector(".rng-speed").value   = speedSlider;
+    el.querySelector(".rng-speed").value = speedSlider;
     panel._applySpeed(speedSlider);
     if (!panel.isRunning) {
-      el.querySelector(".sel-size").value   = size;
-      el.querySelector(".inp-target").value = targetRaw;
-      panel._applySharedPreview(sharedValues, targetRaw);
+      const type = _algoType(el.querySelector(".sel-algo").value);
+      el.querySelector(".sel-size").value = size;
+      if (type === "search") {
+        el.querySelector(".inp-target").value = targetRaw;
+        panel._applySharedPreview(sharedValues, targetRaw);
+      } else if (type === "sort") {
+        el.querySelector(".sel-condition").value = condition;
+        panel._drawPreview();
+      } else {
+        panel._drawPreview();
+      }
     }
   });
 }
@@ -148,13 +173,9 @@ function syncSize() {
   const front = panels.reduce((a, b) =>
     (parseInt(b.style.zIndex) || 1) > (parseInt(a.style.zIndex) || 1) ? b : a
   );
-  const w = front.offsetWidth;
-  const h = front.offsetHeight;
+  const w = front.offsetWidth, h = front.offsetHeight;
   panels.forEach(el => {
-    if (el !== front) {
-      el.style.width  = w + "px";
-      el.style.height = h + "px";
-    }
+    if (el !== front) { el.style.width = w + "px"; el.style.height = h + "px"; }
   });
 }
 
@@ -166,7 +187,7 @@ function addPanel() {
 
 // ===== 全開始 / 全一時停止 / 全停止 / 全リセット ====================
 function startAll() {
-  document.querySelectorAll(".panel").forEach((el) => {
+  document.querySelectorAll(".panel").forEach(el => {
     const p = el._panel;
     if (p && !p.isRunning) p.start();
   });
@@ -183,14 +204,14 @@ function pauseAll() {
     anyRunning ? "▶ 全再開" : "⏸ 全一時停止";
 }
 function stopAll() {
-  document.querySelectorAll(".panel").forEach((el) => {
+  document.querySelectorAll(".panel").forEach(el => {
     const p = el._panel;
     if (p && p.isRunning) p.stop();
   });
   document.getElementById("btn-pause-all").textContent = "⏸ 全一時停止";
 }
 function resetAll() {
-  document.querySelectorAll(".panel").forEach((el) => {
+  document.querySelectorAll(".panel").forEach(el => {
     const p = el._panel;
     if (p) p.reset();
   });
@@ -212,6 +233,7 @@ class ArrayPanel {
     this.numItems    = 0;
     this._lastFrame  = null;
     this._frameCount = 0;
+    this._speed      = 0.1;
   }
 
   // ── DOM 構築 ────────────────────────────────────────────────────
@@ -222,7 +244,6 @@ class ArrayPanel {
     el.id        = `panel-${this.id}`;
     el.innerHTML = this._template();
 
-    // 既存パネルの右端に配置
     let initLeft = 0, initTop = 0;
     const existing = container.querySelectorAll(".panel");
     if (existing.length > 0) {
@@ -233,11 +254,9 @@ class ArrayPanel {
       });
       const panelW = 520;
       if (maxRight + panelW <= window.innerWidth) {
-        initLeft = maxRight;
-        initTop  = 0;
+        initLeft = maxRight; initTop = 0;
       } else {
-        initLeft = 0;
-        initTop  = maxBottom;
+        initLeft = 0; initTop = maxBottom;
       }
     }
     el.style.left = initLeft + "px";
@@ -247,6 +266,7 @@ class ArrayPanel {
 
     this._bind();
     this._populateSelects();
+    this._updateParamVisibility();
     this._bringToFront();
     requestAnimationFrame(() => this._drawPreview());
     return el;
@@ -266,12 +286,15 @@ class ArrayPanel {
         </label>
       </div>
       <div class="params-row">
-        <label>データ数
+        <label class="lbl-size">データ数
           <select class="sel-size"></select>
         </label>
-        <label>target
+        <label class="lbl-target">target
           <input type="number" class="inp-target" min="0" max="999" placeholder="自動"
                  style="width:60px" title="探索する値 (空欄=自動)">
+        </label>
+        <label class="lbl-condition" style="display:none">データ条件
+          <select class="sel-condition"></select>
         </label>
         <div class="speed-group">
           <label>速度</label>
@@ -311,11 +334,24 @@ class ArrayPanel {
     dataSizes.forEach(s => selSize.appendChild(new Option(String(s), s)));
     selSize.value = document.getElementById("global-size")?.value || 16;
 
+    const selCond = this.el.querySelector(".sel-condition");
+    DATA_CONDITIONS.forEach(c => selCond.appendChild(new Option(c.name, c.id)));
+
     const gSpeed = document.getElementById("global-speed")?.value;
     if (gSpeed) {
       this.el.querySelector(".rng-speed").value = gSpeed;
       this._applySpeed(Number(gSpeed));
     }
+  }
+
+  // ── アルゴリズム種別に応じて UI を表示/非表示 ─────────────────
+  _updateParamVisibility() {
+    const algoId = Number(this.el.querySelector(".sel-algo").value);
+    const type   = _algoType(algoId);
+
+    this.el.querySelector(".lbl-target")   .style.display = type === "search" ? "" : "none";
+    this.el.querySelector(".lbl-condition").style.display = type === "sort"   ? "" : "none";
+    // lbl-size は常に表示 (misc でも num_items は参照される)
   }
 
   // ── イベントバインド ─────────────────────────────────────────
@@ -332,18 +368,19 @@ class ArrayPanel {
       this._applySpeed(Number(ev.target.value));
     });
 
-    q(".sel-algo") .addEventListener("change", () => { if (!this.isRunning) this._drawPreview(); });
-    q(".sel-size") .addEventListener("change", () => { if (!this.isRunning) this._drawPreview(); });
-    q(".inp-target").addEventListener("change", () => { if (!this.isRunning) this._drawPreview(); });
+    q(".sel-algo").addEventListener("change", () => {
+      if (!this.isRunning) { this._updateParamVisibility(); this._drawPreview(); }
+    });
+    q(".sel-size")     .addEventListener("change", () => { if (!this.isRunning) this._drawPreview(); });
+    q(".inp-target")   .addEventListener("change", () => { if (!this.isRunning) this._drawPreview(); });
+    q(".sel-condition").addEventListener("change", () => { if (!this.isRunning) this._drawPreview(); });
 
     this.el.addEventListener("mousedown", () => this._bringToFront());
 
-    // キャンバスリサイズ監視
     const ro = new ResizeObserver(() => this._onResize());
     ro.observe(this.el);
     ro.observe(q(".canvas-wrapper"));
 
-    // フリードラッグ
     const handle = q(".drag-handle");
     handle.addEventListener("mousedown", (e) => {
       e.preventDefault();
@@ -354,8 +391,7 @@ class ArrayPanel {
       const onMove = (mv) => {
         const dx = (mv.clientX - prevX) / zoomLevel;
         const dy = (mv.clientY - prevY) / zoomLevel;
-        prevX = mv.clientX;
-        prevY = mv.clientY;
+        prevX = mv.clientX; prevY = mv.clientY;
 
         let newLeft = (parseFloat(this.el.style.left) || 0) + dx;
         let newTop  = (parseFloat(this.el.style.top)  || 0) + dy;
@@ -405,17 +441,14 @@ class ArrayPanel {
 
     const wrapper = this.el.querySelector(".canvas-wrapper");
     const canvas  = this.el.querySelector(".array-canvas");
-    const w = wrapper.clientWidth;
-    const h = wrapper.clientHeight;
+    const w = wrapper.clientWidth, h = wrapper.clientHeight;
     if (w <= 0 || h <= 0) return;
 
     const sizeChanged = (canvas.width !== w || canvas.height !== h);
     if (!sizeChanged) return;
-    canvas.width  = w;
-    canvas.height = h;
+    canvas.width = w; canvas.height = h;
 
     if (this._lastFrame) {
-      // 実行中 or 完了後: 最終フレームを再描画
       const ac = new ArrayCanvas(canvas);
       if (this.isRunning && this.arrayCanvas) {
         this.arrayCanvas.canvas = canvas;
@@ -435,13 +468,12 @@ class ArrayPanel {
     const h = wrapper.clientHeight || Math.round(w * 0.55);
     if (w <= 0) return;
     if (canvas.width !== w || canvas.height !== h) {
-      canvas.width  = w;
-      canvas.height = h;
+      canvas.width = w; canvas.height = h;
     }
     this._drawPreviewOnCanvas(canvas);
   }
 
-  /** 全パネル一括適用用: 外部から渡した共有データでプレビューを描画 */
+  /** 全パネル一括適用: 外部から共有データを渡して search プレビューを描画 */
   _applySharedPreview(sharedValues, targetRaw) {
     const wrapper = this.el.querySelector(".canvas-wrapper");
     const canvas  = this.el.querySelector(".array-canvas");
@@ -449,15 +481,14 @@ class ArrayPanel {
     const h = wrapper.clientHeight || Math.round(w * 0.55);
     if (w <= 0) return;
     if (canvas.width !== w || canvas.height !== h) {
-      canvas.width  = w;
-      canvas.height = h;
+      canvas.width = w; canvas.height = h;
     }
     const algoId = Number(this.el.querySelector(".sel-algo").value);
     const algo   = algorithms.find(a => a.id === algoId);
-    const sorted = !!(algo && algo.meta && algo.meta.sorted);
+    const sorted = !!(algo?.meta?.sorted);
     const forced = targetRaw !== "" ? Number(targetRaw) : null;
     this._previewCache = new ArrayCanvas(canvas).drawPreview(
-      sharedValues.length, sorted, forced, sharedValues
+      sharedValues.length, sorted, forced, sharedValues, true, "cells"
     );
   }
 
@@ -465,10 +496,23 @@ class ArrayPanel {
     const numItems = Number(this.el.querySelector(".sel-size").value) || 16;
     const algoId   = Number(this.el.querySelector(".sel-algo").value);
     const algo     = algorithms.find(a => a.id === algoId);
-    const sorted   = !!(algo && algo.meta && algo.meta.sorted);
-    const tRaw     = this.el.querySelector(".inp-target").value.trim();
-    const forced   = tRaw !== "" ? Number(tRaw) : null;
-    this._previewCache = new ArrayCanvas(canvas).drawPreview(numItems, sorted, forced);
+    const type     = algo?.meta?.type || "search";
+
+    // misc 型 (階乗・フィボナッチ等) は配列を使わないため空白キャンバスを表示
+    if (type === "misc") {
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#1a1a2e";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+
+    const sorted     = !!(algo?.meta?.sorted);
+    const showTarget = (type === "search");
+    const tRaw       = this.el.querySelector(".inp-target").value.trim();
+    const forced     = (showTarget && tRaw !== "") ? Number(tRaw) : null;
+    this._previewCache = new ArrayCanvas(canvas).drawPreview(
+      numItems, sorted, forced, null, showTarget, "cells"
+    );
   }
 
   // ── スピード変換 ─────────────────────────────────────────────
@@ -492,19 +536,30 @@ class ArrayPanel {
     const algoId   = Number(this.el.querySelector(".sel-algo").value);
     const numItems = Number(this.el.querySelector(".sel-size").value);
     const speed    = this._currentSpeed();
+    const type     = _algoType(algoId);
 
     let info;
     try {
-      const tRaw = this.el.querySelector(".inp-target").value.trim();
       const body = { algorithm_id: algoId, num_items: numItems, speed };
-      if (tRaw !== "") {
-        body.target = Number(tRaw);
-      } else if (this._previewCache?.target !== undefined) {
-        body.target = this._previewCache.target;
+
+      if (type === "search") {
+        const tRaw = this.el.querySelector(".inp-target").value.trim();
+        if (tRaw !== "") {
+          body.target = Number(tRaw);
+        } else if (this._previewCache?.target !== undefined && this._previewCache.target !== null) {
+          body.target = this._previewCache.target;
+        }
+        if (this._previewCache?.values) {
+          body.data = this._previewCache.values;
+        }
+      } else if (type === "sort") {
+        body.data_condition = Number(this.el.querySelector(".sel-condition").value);
+        if (this._previewCache?.values) {
+          body.data = this._previewCache.values;
+        }
       }
-      if (this._previewCache?.values) {
-        body.data = this._previewCache.values;
-      }
+      // misc: num_items だけ送れば OK
+
       const res = await fetch("/api/start", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
@@ -532,8 +587,8 @@ class ArrayPanel {
     this.el.classList.remove("finished");
     this._setStatus("実行中", "#90caf9");
     this._setBtns({ start: false, pause: true, stop: true, reset: false });
-    this.el.querySelector(".status-algo").textContent = info.algo_name;
-    this.el.querySelector(".text-overlay").textContent = "";
+    this.el.querySelector(".status-algo").textContent   = info.algo_name;
+    this.el.querySelector(".text-overlay").textContent  = "";
 
     this.client = new AnimationClient(
       this.sessionId,
@@ -546,12 +601,11 @@ class ArrayPanel {
 
   // ── フレーム受信 ─────────────────────────────────────────────
   _onFrame(frame) {
-    this._lastFrame   = frame;
-    this._frameCount  = (this._frameCount ?? 0) + 1;
+    this._lastFrame  = frame;
+    this._frameCount = (this._frameCount ?? 0) + 1;
 
     this.arrayCanvas.draw(frame);
-    this.el.querySelector(".status-frames").textContent =
-      `フレーム: ${this._frameCount}`;
+    this.el.querySelector(".status-frames").textContent = `フレーム: ${this._frameCount}`;
 
     if (frame.finished) {
       this.isRunning = false;
@@ -603,7 +657,7 @@ class ArrayPanel {
   // ── リセット ─────────────────────────────────────────────────
   reset() {
     if (this.isRunning) this.stop();
-    this.el.querySelector(".text-overlay").textContent = "（開始ボタンを押してください）";
+    this.el.querySelector(".text-overlay").textContent  = "（開始ボタンを押してください）";
     this.el.querySelector(".status-frames").textContent = "フレーム: 0";
     this.el.classList.remove("finished");
     this._setStatus("待機中", "#888");
