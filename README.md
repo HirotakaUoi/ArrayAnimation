@@ -1,6 +1,6 @@
-# SearchBarAnimation
+# ArrayAnimation
 
-配列探索アルゴリズムをブラウザ上でリアルタイムにアニメーション表示する可視化ツールです。
+探索・ソート・その他アルゴリズムをブラウザ上でリアルタイムにアニメーション表示する可視化ツールです。
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green)
@@ -9,13 +9,15 @@
 ## 概要
 
 FastAPI + WebSocket によるサーバーサイド生成と Canvas 2D API による描画を組み合わせ、
-各アルゴリズムの動作を縦棒グラフ形式でステップごとに可視化します。
+各アルゴリズムの動作をステップごとに可視化します。
 
-- 左端の **参照バー（緑）** が探索対象 (`target`) の高さを示します
-- アニメーション終了時に **Found（緑）/ Not Found（赤）** のオーバーレイで結果を表示します
+- 棒グラフ・セル配列・ヒープ木・バケツ行・テープ・再帰木など複数の描画形式に対応
 - 複数パネルを同時に開いて異なるアルゴリズムを並べて比較できます
+- アニメーション速度をリアルタイムで変更できます
 
 ## 対応アルゴリズム
+
+### 探索 (Search)
 
 | アルゴリズム | 説明 |
 |---|---|
@@ -25,9 +27,26 @@ FastAPI + WebSocket によるサーバーサイド生成と Canvas 2D API によ
 | 二分探索（反復） | 探索範囲を半分ずつ絞り込む反復版 |
 | 二分探索（再帰） | 同じ二分探索の再帰版 |
 
-## スクリーンショット
+### ソート (Sort)
 
-![アニメーション例](static/screenshot.png)
+| アルゴリズム | 説明 |
+|---|---|
+| マージソート（反復） | ボトムアップのマージソート |
+| マージソート（再帰） | トップダウンのマージソート |
+| マージソート（3テープ） | 3本のテープを使った外部マージソート |
+| ヒープソート | ヒープ木を可視化しながらソート |
+| バケツソート | 値域をバケツに分割してソート |
+| 基数ソート（LSD） | 下位桁から処理する基数ソート |
+
+### その他 (Misc)
+
+| アルゴリズム | 説明 |
+|---|---|
+| 階乗（反復） | ループによる階乗計算 |
+| 階乗（再帰） | 再帰スタックを階段状に可視化 |
+| フィボナッチ（反復） | スライディングウィンドウで計算 |
+| フィボナッチ（再帰） | 再帰木を展開しながら計算 |
+| フィボナッチ（メモ化） | メモ化による枝刈りを再帰木で可視化 |
 
 ## 動作環境
 
@@ -38,45 +57,49 @@ FastAPI + WebSocket によるサーバーサイド生成と Canvas 2D API によ
 
 ```bash
 # リポジトリをクローン
-git clone https://github.com/HirotakaUoi/SearchBarAnimation.git
-cd SearchBarAnimation
+git clone https://github.com/HirotakaUoi/ArrayAnimation.git
+cd ArrayAnimation
 
 # 依存パッケージをインストール
 pip install -r requirements.txt
 
 # サーバーを起動
-uvicorn main:app --reload --port 8004
+uvicorn main:app --reload --port 8005
 ```
 
-ブラウザで http://localhost:8004 を開いてください。
+ブラウザで http://localhost:8005 を開いてください。
 
 ## 使い方
 
 1. **パネル追加** ボタンでアニメーションパネルを追加
-2. パネルごとにアルゴリズム・データ数・target・速度を設定
+2. パネルごとにアルゴリズム・データ数・速度を設定
 3. **開始** ボタンでアニメーション再生
-4. **全パネルへ適用** で全パネルに同じデータセット・target を一括設定して比較実行
+4. **全パネルへ適用** で全パネルに同じ設定を一括適用して比較実行
 
-### target の指定
+### 探索アルゴリズムの target 指定
 
-- 空欄のまま開始すると、70% の確率でデータ内の値、30% で範囲外の値が自動選択されます
+- 空欄のまま開始すると、データ内の値または範囲外の値が自動選択されます
 - 数値を入力すると、その値を target として探索します
+
+### ソートアルゴリズムのデータ初期状態
+
+- **ランダム** / **昇順** / **降順** / **ほぼ昇順** から選択できます
 
 ## ファイル構成
 
 ```
-SearchBarAnimation/
+ArrayAnimation/
 ├── main.py              # FastAPI サーバー・WebSocket エンドポイント
-├── algorithms.py        # 各探索アルゴリズムのジェネレータ
+├── algorithms.py        # 全アルゴリズムのジェネレータ + AlgorithmList
 ├── requirements.txt
 └── static/
     ├── index.html
     ├── css/
     │   └── style.css
     └── js/
-        ├── array_canvas.js  # Canvas 描画ユーティリティ
+        ├── array_canvas.js  # Canvas 描画エンジン（ArrayCanvas クラス）
         ├── ws_client.js     # WebSocket クライアント
-        └── app.js           # パネル管理・メインアプリ
+        └── app.js           # マルチパネル UI・パネル管理
 ```
 
 ## ライセンス
