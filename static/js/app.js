@@ -196,9 +196,11 @@ function _updateContainerSize() {
 function syncSize() {
   const panels = [...document.querySelectorAll(".panel")];
   if (panels.length < 2) return;
-  const front = panels.reduce((a, b) =>
-    (parseInt(b.style.zIndex) || 1) > (parseInt(a.style.zIndex) || 1) ? b : a
-  );
+  const front =
+    document.querySelector(".panel.front") ||
+    panels.reduce((a, b) =>
+      (parseInt(b.style.zIndex) || 1) > (parseInt(a.style.zIndex) || 1) ? b : a
+    );
   const w = front.offsetWidth, h = front.offsetHeight;
   panels.forEach(el => {
     if (el !== front) { el.style.width = w + "px"; el.style.height = h + "px"; }
@@ -293,7 +295,10 @@ class ArrayPanel {
     this._bind();
     this._populateSelects();
     this._updateParamVisibility();
-    this._bringToFront();
+    { let mz = 0;
+      document.querySelectorAll(".panel").forEach(p =>
+        { mz = Math.max(mz, parseInt(p.style.zIndex) || 1); });
+      el.style.zIndex = mz + 1; }
     requestAnimationFrame(() => this._drawPreview());
     return el;
   }
