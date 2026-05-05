@@ -604,7 +604,7 @@ class ArrayCanvas {
       ctx.textBaseline = "alphabetic";
 
       ctx.strokeStyle = isActive ? "#ffffff" : color;
-      ctx.lineWidth   = isActive ? 1.5 : 0.8;
+      ctx.lineWidth   = isActive ? 1.5 : 1;
       ctx.beginPath();
       ctx.moveTo(PAD_L + LBL_W + SEP_W, rowY + 3);
       ctx.lineTo(PAD_L + LBL_W + SEP_W, rowY + rowH - 3);
@@ -622,7 +622,7 @@ class ArrayCanvas {
         ctx.restore();
 
         ctx.strokeStyle = isLast ? _acTheme().cellText : color;
-        ctx.lineWidth   = isLast ? 1.5 : 0.8;
+        ctx.lineWidth   = isLast ? 1.5 : 1;
         ctx.strokeRect(cx + 0.5, rowY + 2.5, cellW - 1, rowH - 5);
 
         const fs = Math.max(7, Math.min(12, cellW * 0.44, (rowH - 4) * 0.55));
@@ -810,7 +810,7 @@ class ArrayCanvas {
           ctx.restore();
         }
         ctx.strokeStyle = isHead ? color : _acTheme().edgeColor;
-        ctx.lineWidth   = isHead ? 2 : 0.8;
+        ctx.lineWidth   = isHead ? 2 : 1;
         ctx.strokeRect(cx + 0.5, tapeY + 0.5, cellW - 2, cellH - 1);
 
         const fs = Math.max(8, Math.min(13, cellW * 0.42, cellH * 0.46));
@@ -962,7 +962,7 @@ class ArrayCanvas {
         ctx.beginPath();
         ctx.arc(node._x + nodeR * 0.72, node._y - nodeR * 0.72, bR, 0, Math.PI * 2);
         ctx.fillStyle = "#44aacc"; ctx.fill();
-        ctx.strokeStyle = "#fff"; ctx.lineWidth = 0.8; ctx.stroke();
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.stroke();
         ctx.fillStyle = "#fff"; ctx.font = `bold ${Math.max(5, bR * 0.9)}px sans-serif`;
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.fillText("M", node._x + nodeR * 0.72, node._y - nodeR * 0.72);
@@ -1020,7 +1020,7 @@ class ArrayCanvas {
       if (i > 0 && rows[i].depth > rows[i - 1].depth) {
         const prevX = PAD_L + rows[i - 1].depth * INDENT + 3;
         const prevY = areaY + PAD_T + (i - 1) * rowH + rowH * 0.75;
-        ctx.strokeStyle = _acTheme().connectorColor; ctx.lineWidth = 0.8;
+        ctx.strokeStyle = _acTheme().connectorColor; ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(prevX, prevY);
         ctx.lineTo(prevX, rowY + rowH * 0.5);
