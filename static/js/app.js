@@ -422,6 +422,7 @@ class ArrayPanel {
       let prevX = pt.clientX, prevY = pt.clientY;
 
       const onMove = (mv) => {
+        if (mv.cancelable) mv.preventDefault();
         const p = mv.touches ? mv.touches[0] : mv;
         const dx = (p.clientX - prevX) / zoomLevel;
         const dy = (p.clientY - prevY) / zoomLevel;
@@ -465,6 +466,7 @@ class ArrayPanel {
       const pt = e.touches ? e.touches[0] : e;
       let prevX = pt.clientX, prevY = pt.clientY;
       const onMove = (mv) => {
+        if (mv.cancelable) mv.preventDefault();
         const p = mv.touches ? mv.touches[0] : mv;
         const dx = (p.clientX - prevX) / zoomLevel;
         const dy = (p.clientY - prevY) / zoomLevel;
