@@ -199,7 +199,7 @@ ArrayAnimation/
 
 | ファイル | バージョン |
 |---|---|
-| `static/js/app.js` | **v15** |
+| `static/js/app.js` | **v17** |
 | `static/js/array_canvas.js` | **v17** |
 | `static/js/ws_client.js` | v1 |
 | `static/css/style.css` | v4 |
@@ -210,7 +210,7 @@ ArrayAnimation/
 
 | 日付 | 内容 |
 |---|---|
-| 2026-05-10 | タッチドラッグ軸ロックバグ修正 — `onMove` 内に `preventDefault()` 追加 (app.js v14→v15) |
-| 2026-05-10 | タッチデバイス対応 — `resize-handle` 追加、`touch-action: none`、touch イベントリスナー追加 (app.js v13→v14) |
+| 2026-05-11 | drag/resize を Pointer Events API に統一 — `setPointerCapture` で軸ロック完全解消 (app.js v16→v17) |
+| 2026-05-10 | タッチドラッグ軸ロックバグ修正 / スナップをリリース時のみ適用 (app.js v13→v16) |
 | 2026-05-05 | lineWidth 強化 — array_canvas.js v16→v17（アニメーション指針対応） |
 | 2026-05-03 | カラーテーマ全面対応 (dark/bright/hc/hcbright) — array_canvas.js v16 |
