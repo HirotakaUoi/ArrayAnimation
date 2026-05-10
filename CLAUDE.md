@@ -192,3 +192,25 @@ ArrayAnimation/
 | 探索 | 線形探索(基本), 線形探索(番兵法), 線形探索(整列済み), 二分探索(反復), 二分探索(再帰) |
 | ソート | マージソート(反復), マージソート(再帰), マージソート(3テープ), ヒープソート, バケツソート, 基数ソート(LSD) |
 | その他 | 階乗(反復), 階乗(再帰), フィボナッチ(反復), フィボナッチ(再帰), フィボナッチ(メモ化) |
+
+---
+
+## 現在のファイルバージョン
+
+| ファイル | バージョン |
+|---|---|
+| `static/js/app.js` | **v15** |
+| `static/js/array_canvas.js` | **v17** |
+| `static/js/ws_client.js` | v1 |
+| `static/css/style.css` | v4 |
+
+---
+
+## 最近の変更履歴
+
+| 日付 | 内容 |
+|---|---|
+| 2026-05-10 | タッチドラッグ軸ロックバグ修正 — `onMove` 内に `preventDefault()` 追加 (app.js v14→v15) |
+| 2026-05-10 | タッチデバイス対応 — `resize-handle` 追加、`touch-action: none`、touch イベントリスナー追加 (app.js v13→v14) |
+| 2026-05-05 | lineWidth 強化 — array_canvas.js v16→v17（アニメーション指針対応） |
+| 2026-05-03 | カラーテーマ全面対応 (dark/bright/hc/hcbright) — array_canvas.js v16 |
