@@ -199,10 +199,10 @@ ArrayAnimation/
 
 | ファイル | バージョン |
 |---|---|
-| `static/js/app.js` | **v17** |
-| `static/js/array_canvas.js` | **v17** |
+| `static/js/app.js` | **v18** |
+| `static/js/array_canvas.js` | **v18** |
 | `static/js/ws_client.js` | v1 |
-| `static/css/style.css` | v4 |
+| `static/css/style.css` | **v5** |
 
 ---
 
@@ -210,6 +210,7 @@ ArrayAnimation/
 
 | 日付 | 内容 |
 |---|---|
+| 2026-07-03 | 完了時の全画面dim+中央大表示（完了!/Found!/Not Found）を廃止。キャンバス上には一切描かず、ステータスバーの `status-done-badge` に固定背景色バッジ（テーマが変わっても視認性が落ちない）で表示するよう変更。表示時に短いフラッシュアニメーション(1.4秒)を付与。副次的に、テーマ切替時に実行中でないパネル（完了後含む）が最終フレームでなくプレビューに巻き戻るバグも発見・修正 (array_canvas.js v17→v18, app.js v17→v18, style.css v4→v5) |
 | 2026-05-11 | drag/resize を Pointer Events API に統一 — `setPointerCapture` で軸ロック完全解消 (app.js v16→v17) |
 | 2026-05-10 | タッチドラッグ軸ロックバグ修正 / スナップをリリース時のみ適用 (app.js v13→v16) |
 | 2026-05-05 | lineWidth 強化 — array_canvas.js v16→v17（アニメーション指針対応） |
