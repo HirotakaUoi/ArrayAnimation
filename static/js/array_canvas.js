@@ -724,17 +724,28 @@ class ArrayCanvas {
   // tape – 無端テープ
   // ════════════════════════════════════════════════════════════════════
   _drawTape(obj, areaY, areaH) {
-    const { cells = [], head = 0, label = "", color = "#4472C4" } = obj;
+    const { cells = [], head = 0, label = "", color = "#4472C4",
+            highlights = {}, sorted_upto = null, swap = null,
+            reserve_arc = false, head_label = null } = obj;
 
     const ctx = this.ctx;
     const cw  = this.cw;
 
     const PAD    = 6;
     const LBL_W  = 64;
+    // reserve_arc: セル上に注釈 (交換アーク)、セル下に添字ラベルの余白を確保
+    const ARC_H  = reserve_arc ? 24 : 0;
+    const BOT_H  = reserve_arc ? 34 : 14;               // 添字 + ヘッド矢印 + 名前
     // セルサイズを array1d_cells と揃える (小さめに抑える)
-    const cellH  = Math.max(18, Math.min(28, areaH - PAD * 2 - 16));
+    // reserve_arc の単体テープは、全セル + 前後の余白が収まる範囲で大きく描く
+    const availW0 = cw - PAD * 2 - LBL_W;
+    const cellH  = reserve_arc
+      ? Math.max(18, Math.min(48,
+          areaH - PAD * 2 - ARC_H - BOT_H,
+          availW0 / Math.max(6, cells.length + 3)))
+      : Math.max(18, Math.min(28, areaH - PAD * 2 - 16));
     const cellW  = cellH;
-    const tapeY  = areaY + (areaH - cellH - 14) / 2;    // -14 = 矢印スペース
+    const tapeY  = areaY + ARC_H + (areaH - ARC_H - cellH - BOT_H) / 2;
     const availW = cw - PAD * 2 - LBL_W;
     const nVis   = Math.max(3, Math.floor(availW / cellW));
     const half   = Math.floor(nVis / 2);
@@ -777,16 +788,34 @@ class ArrayCanvas {
         ctx.restore();
       } else {
         // データセル
+        const hlColor  = highlights[String(idx)];
+        const isSorted = (sorted_upto !== null && idx < sorted_upto);
+
         ctx.fillStyle = _acTheme().cellBg;
         ctx.fillRect(cx, tapeY, cellW - 1, cellH);
-        if (isHead) {
+        // 整列確定済み領域 (薄い緑)
+        if (isSorted) {
+          ctx.save(); ctx.globalAlpha = 0.26;
+          ctx.fillStyle = "#44aa44";
+          ctx.fillRect(cx, tapeY, cellW - 1, cellH);
+          ctx.restore();
+        }
+        if (hlColor) {
+          ctx.save(); ctx.globalAlpha = 0.5;
+          ctx.fillStyle = hlColor;
+          ctx.fillRect(cx, tapeY, cellW - 1, cellH);
+          ctx.restore();
+        } else if (isHead) {
           ctx.save(); ctx.globalAlpha = 0.45;
           ctx.fillStyle = color;
           ctx.fillRect(cx, tapeY, cellW - 1, cellH);
           ctx.restore();
         }
-        ctx.strokeStyle = isHead ? color : _acTheme().edgeColor;
-        ctx.lineWidth   = isHead ? 2 : 1;
+        ctx.strokeStyle = hlColor ? hlColor
+                        : isHead  ? color
+                        : isSorted ? "#44aa44"
+                        : _acTheme().edgeColor;
+        ctx.lineWidth   = isHead ? 2.5 : hlColor ? 2 : 1;
         ctx.strokeRect(cx + 0.5, tapeY + 0.5, cellW - 2, cellH - 1);
 
         const fs = Math.max(8, Math.min(13, cellW * 0.42, cellH * 0.46));
@@ -796,14 +825,65 @@ class ArrayCanvas {
         ctx.textBaseline = "middle";
         ctx.fillText(String(cells[idx]), cx + cellW / 2, tapeY + cellH / 2);
         ctx.textBaseline = "alphabetic";
+
+        // 添字ラベル (下)
+        if (reserve_arc && cellW >= 14) {
+          const iFs = Math.max(7, Math.min(9, cellW * 0.38));
+          ctx.fillStyle = _acTheme().indexLabelColor;
+          ctx.font      = `${iFs}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.fillText(String(idx), cx + cellW / 2, tapeY + cellH + 11);
+        }
       }
+    }
+
+    // 交換アーク注釈 (セルより上のレイヤ・上の余白に描く)
+    if (swap && ARC_H > 0) {
+      const phase = swap.phase || "before";
+      const aCol  = (phase === "after") ? "#66ddff" : "#ff6600";
+      const xa = PAD + LBL_W + (swap.a - head + half) * cellW + cellW / 2;
+      const xb = PAD + LBL_W + (swap.b - head + half) * cellW + cellW / 2;
+      const topY  = tapeY - 5;
+      const ctrlY = tapeY - ARC_H - 6;
+
+      ctx.save();
+      ctx.strokeStyle = aCol; ctx.lineWidth = 2.5; ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(xa, topY);
+      ctx.quadraticCurveTo((xa + xb) / 2, ctrlY, xb, topY);
+      ctx.stroke();
+      // 両端の矢尻 (セルを指す)
+      ctx.fillStyle = aCol;
+      for (const ax of [xa, xb]) {
+        ctx.beginPath();
+        ctx.moveTo(ax, topY + 4);
+        ctx.lineTo(ax - 4.5, topY - 3);
+        ctx.lineTo(ax + 4.5, topY - 3);
+        ctx.closePath(); ctx.fill();
+      }
+      // アーク頂点に交換記号
+      ctx.font = "bold 12px sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      ctx.fillText("⇄", (xa + xb) / 2, (topY + ctrlY) / 2 + 3);
+      ctx.textBaseline = "alphabetic";
+      ctx.restore();
     }
 
     // ヘッド矢印
     const hx = PAD + LBL_W + half * cellW + cellW / 2;
-    ctx.fillStyle = color; ctx.font = "12px sans-serif";
+    ctx.fillStyle = color;
     ctx.textAlign = "center";
-    ctx.fillText("▲", hx, tapeY + cellH + 13);
+    if (reserve_arc) {
+      ctx.font = "13px sans-serif";
+      ctx.fillText("▲", hx, tapeY + cellH + 24);
+      if (head_label) {
+        ctx.font = "10px monospace";
+        ctx.fillText(`${head_label} = ${head}`, hx, tapeY + cellH + 34);
+      }
+    } else {
+      ctx.font = "12px sans-serif";
+      ctx.fillText("▲", hx, tapeY + cellH + 13);
+    }
 
     ctx.restore();
   }

@@ -66,11 +66,24 @@ def _bucket_rows(id, buckets, bucket_colors, label="",
         "direction": direction,
     }
 
-def _tape(id, cells, head, label="", color="#4472C4", weight=1):
+def _tape(id, cells, head, label="", color="#4472C4", weight=1,
+          hl=None, sorted_upto=None, swap=None, reserve_arc=False,
+          head_label=None):
+    """無端テープ
+
+    hl          – {インデックス: "色"} で個別セルをハイライト
+    sorted_upto – このインデックス未満を「整列確定」(薄緑)で表示
+    swap        – {"a": idx, "b": idx, "phase": "before"|"after"} 交換アーク注釈
+    reserve_arc – True でセル上に注釈用スペース・セル下に添字ラベルを確保
+    head_label  – ヘッド矢印の下に表示する名前 (例 "pos")
+    """
     return {
         "id": id, "type": "tape",
         "cells": list(cells), "head": int(head),
         "label": label, "color": color, "weight": weight,
+        "highlights": {str(k): v for k, v in (hl or {}).items()},
+        "sorted_upto": sorted_upto, "swap": swap,
+        "reserve_arc": bool(reserve_arc), "head_label": head_label,
     }
 
 def _staircase(id, rows, label=""):
@@ -458,6 +471,108 @@ def merge_sort_tape(n, data_condition=0, data=None):
         msize *= 2
 
     yield frame(0, 0, 0, "ソート完了!", "#FFD700", finished=True)
+
+
+# ---------------------------------------------------------------------------
+# ノームソート (1テープ) – ヘッドが ±1 しか動けない 1 本のテープで整列
+# ---------------------------------------------------------------------------
+
+def gnome_sort_tape(n, data_condition=0, data=None):
+    """ノームソート (1テープ)
+
+    ノームソートは「左隣と比べ、順序が正しければ 1 コマ右へ、
+    逆順なら交換して 1 コマ左へ戻る」だけのアルゴリズム。
+    ヘッドの移動が常に ±1 コマなので、巻き戻しのできない
+    3 テープ方式と違い **1 本のテープだけ** で実行できる。
+    """
+    MAX_N = 32                                   # テープ表示・O(N^2) の都合で上限
+    data  = _make_sort_data(n, data_condition, data)
+    N     = min(len(data), MAX_N)
+    tape  = data[:N]
+
+    CMP_C  = "yellow"        # 比較中
+    OK_C   = "#44aa44"       # 順序OK / 確定
+    BAD_C  = "#ff6600"       # 逆順 (交換前)
+    NEW_C  = "#66ddff"       # 交換直後
+
+    title = f"ノームソート (1テープ)  N = {N}"
+    if len(data) > MAX_N:
+        title += f"   ※ {len(data)} 個中 先頭 {N} 個"
+
+    cnt = {"cmp": 0, "swp": 0}
+
+    def frame(head, sorted_upto, msg, color="lightgreen",
+              hl=None, swap=None, finished=False):
+        texts = [
+            {"message": title, "color": "white"},
+            {"message": f"ヘッド位置 pos = {head}    比較 {cnt['cmp']} 回 / "
+                        f"交換 {cnt['swp']} 回", "color": "cyan"},
+            {"message": msg, "color": color},
+        ]
+        return _f([_tape("tape", tape, head, "テープ", "#4472C4",
+                         hl=hl, sorted_upto=sorted_upto, swap=swap,
+                         reserve_arc=True, head_label="pos")],
+                  texts, finished=finished)
+
+    # ── 初期データ → テープへ ──
+    yield _f([_c("init", tape, "初期データ")],
+             [{"message": title, "color": "white"},
+              {"message": "1 本のテープに書き込みます", "color": "cyan"},
+              {"message": "ヘッドは 1 コマずつ左右にしか動けません",
+               "color": "lightgreen"}])
+
+    pos = 0
+    yield frame(0, 0, "テープの先頭にヘッドを置きます  (pos = 0)", "cyan")
+
+    while pos < N:
+        # 先頭では左隣が無いので比較せず前進
+        if pos == 0:
+            yield frame(0, 0, "pos = 0: 左隣が無いので比較せずに前進", "lightgreen",
+                        hl={0: OK_C})
+            pos = 1
+            if pos < N:
+                yield frame(pos, pos, f"ヘッドを 1 コマ右へ  →  pos = {pos}",
+                            "lightgreen")
+            continue
+
+        a, b = tape[pos - 1], tape[pos]
+        cnt["cmp"] += 1
+        yield frame(pos, pos,
+                    f"比較: A[{pos - 1}] = {a}   と   A[{pos}] = {b}", "yellow",
+                    hl={pos - 1: CMP_C, pos: CMP_C})
+
+        if a <= b:
+            yield frame(pos, pos, f"{a} ≦ {b}  順序OK  →  ヘッドを右へ",
+                        "lightgreen", hl={pos - 1: OK_C, pos: OK_C})
+            pos += 1
+            if pos < N:
+                yield frame(pos, pos, f"ヘッドを 1 コマ右へ  →  pos = {pos}",
+                            "lightgreen")
+        else:
+            # 交換前 (逆順): 交換アークを付けて「これから入れ替える」ことを示す
+            yield frame(pos, pos, f"{a} > {b}  逆順  →  2 つを交換する", "#ff8844",
+                        hl={pos - 1: BAD_C, pos: BAD_C},
+                        swap={"a": pos - 1, "b": pos, "phase": "before"})
+            tape[pos - 1], tape[pos] = tape[pos], tape[pos - 1]
+            cnt["swp"] += 1
+            # 交換後: 値が入れ替わったことを別色で示す
+            yield frame(pos, pos - 1,
+                        f"交換完了: A[{pos - 1}] = {b}   A[{pos}] = {a}", "#66ddff",
+                        hl={pos - 1: NEW_C, pos: NEW_C},
+                        swap={"a": pos - 1, "b": pos, "phase": "after"})
+            pos -= 1
+            yield frame(pos, pos, f"ヘッドを 1 コマ左へ戻る  →  pos = {pos}",
+                        "#ff8844")
+
+    yield frame(N, N, "ヘッドがテープの右端を越えました  →  整列完了", "#FFD700",
+                hl={i: OK_C for i in range(N)})
+    yield _f([_c("done", tape, "ソート結果",
+                 hl={i: OK_C for i in range(N)})],
+             [{"message": title, "color": "white"},
+              {"message": f"比較 {cnt['cmp']} 回 / 交換 {cnt['swp']} 回",
+               "color": "cyan"},
+              {"message": "ソート完了!", "color": "#FFD700"}],
+             finished=True)
 
 
 # ---------------------------------------------------------------------------
@@ -909,6 +1024,7 @@ AlgorithmList = [
     ("ヒープソート",                 heap_sort,               {"type": "sort"}),
     ("バケツソート",                 bucket_sort,             {"type": "sort"}),
     ("基数ソート (LSD)",            radix_sort,              {"type": "sort"}),
+    ("ノームソート (1テープ)",        gnome_sort_tape,         {"type": "sort"}),
     # ── その他 ──
     ("階乗 (反復)",                 factorial_iter,          {"type": "misc"}),
     ("階乗 (再帰)",                 factorial_rec,           {"type": "misc"}),
