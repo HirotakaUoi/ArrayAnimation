@@ -371,27 +371,29 @@ def _str_inputs(n, text, pattern):
     return text, str(pattern)
 
 
-def _string_run(frames):
-    """全フレームを作ってから、列数 cols を全フレーム共通の値にそろえて流す。
-    (パターンが末尾からはみ出す位置まで進むことがあるため、表示がずれないよう最大値に合わせる)"""
+STR_KV_WEIGHT = 1        # ずらし表の枠 (string_match は weight=3)。app.js のプレビューと合わせる
+
+
+def _string_run(frames, T, P):
+    """全フレームを作ってから、3 つのアルゴリズムとプレビューで同じ枠になるようにそろえて流す。
+    - 列数 cols = テキスト長 + パターン長 (パターンが末尾からはみ出しても収まる。
+      アルゴリズムによらず同じ値なので、並べたときに T・P の大きさと位置がそろう)
+    - ずらし表 (kv_table) の枠を常に入れる (BMH 以外は空)。PMT の行は描画側が常に確保する"""
     frames = list(frames)
-    need = 1
+    cols = len(T) + len(P)
     for fr in frames:
+        if not any(o["type"] == "kv_table" for o in fr["objects"]):
+            fr["objects"].append(_kv_table("kv", "", [], [], weight=STR_KV_WEIGHT))
         for o in fr["objects"]:
             if o["type"] != "string_match":
                 continue
             pm = len(o["pattern"]) if o["pattern"] else 0
-            need = max(need, len(o["text"]), o["shift"] + pm)
-            if o["ghost"] is not None:
-                need = max(need, o["ghost"] + pm)
-            for p in o["pointers"]:
-                need = max(need, p["col"] + 1)
-            if o["table"]:
-                need = max(need, o["table"]["offset"] + len(o["table"]["values"]))
-    for fr in frames:
-        for o in fr["objects"]:
-            if o["type"] == "string_match":
-                o["cols"] = need
+            need = max(len(o["text"]), o["shift"] + pm,
+                       (o["ghost"] + pm) if o["ghost"] is not None else 0,
+                       max((p["col"] + 1 for p in o["pointers"]), default=0),
+                       (o["table"]["offset"] + len(o["table"]["values"])) if o["table"] else 0)
+            assert need <= cols, (need, cols)   # はみ出しは最大でもパターン長まで
+            o["cols"] = cols
     yield from frames
 
 
@@ -414,7 +416,7 @@ def _found_frames(make, i, m):
 
 def string_match_brute_force(n, text=None, pattern=None, **kwargs):
     T, P = _str_inputs(n, text, pattern)
-    yield from _string_run(_bf_frames(T, P))
+    yield from _string_run(_bf_frames(T, P), T, P)
 
 
 def _bf_frames(T, P):
@@ -473,7 +475,7 @@ def _bf_frames(T, P):
 
 def string_match_kmp(n, text=None, pattern=None, **kwargs):
     T, P = _str_inputs(n, text, pattern)
-    yield from _string_run(_kmp_frames(T, P))
+    yield from _string_run(_kmp_frames(T, P), T, P)
 
 
 def _kmp_frames(T, P):
@@ -611,7 +613,7 @@ def _kmp_frames(T, P):
 
 def string_match_bmh(n, text=None, pattern=None, **kwargs):
     T, P = _str_inputs(n, text, pattern)
-    yield from _string_run(_bmh_frames(T, P))
+    yield from _string_run(_bmh_frames(T, P), T, P)
 
 
 def _bmh_frames(T, P):
@@ -631,7 +633,7 @@ def _bmh_frames(T, P):
         ks = [_ch(c) for c in keys] + ["その他"]
         vs = [vals[c] for c in keys] + [m]
         return _kv_table("bmh_table", "ずらし表", ks, vs,
-                         hl={key: color} if key is not None else None)
+                         hl={key: color} if key is not None else None, weight=STR_KV_WEIGHT)
 
     def F(start, msg, color="lightgreen", key=None, key_color=_SC_SET, ptr=None, **kw):
         info = {"message": f"比較 {st['cmp']} 回 ・ ずらし {st['shift']} 回", "color": "cyan"}

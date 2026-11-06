@@ -1137,35 +1137,37 @@ class ArrayCanvas {
 
     ctx.save();
 
-    // ── 左のラベル列 ──
+    // ── 左のラベル列 (幅は 3 つのアルゴリズムで共通にする: 並べたときに列の位置がそろうように) ──
     ctx.font = "bold 12px sans-serif";
-    const labels = [text_label, pattern ? pattern_label : "", table ? table.label : ""];
+    const labels = ["T", "P", "PMT", "接頭辞", text_label, pattern_label, table ? table.label : ""];
     const LBL_W  = Math.ceil(Math.max(...labels.map(s => ctx.measureText(s).width))) + 14;
     const PAD_L = 8, PAD_R = 10;
     const availW = cw - PAD_L - LBL_W - PAD_R;
 
     // ── 縦方向の配分 (パネル既定の高さでもセルが小さくなりすぎないよう余白は最小限) ──
+    //    表 (KMP の PMT) の行は、表が無いアルゴリズムやプレビューでも常に確保する
+    //    (アルゴリズムや開始前後で T・P の大きさと位置が変わらないように)
     let ARROW_H = 28, IDX_H = 12, PTR_H = 16, GAP_MIN = 16;
     const TBL_GAP  = 3;
-    const unitRows = (table ? 1 : 0) + 2 + 0.9;          // 表 + パターン + テキスト + 比較の隙間
+    const unitRows = 1 + 2 + 0.9;                        // 表 + パターン + テキスト + 比較の隙間
     // パネルが低いときは、セルを 16px 確保できるところまで余白の帯を縮める (全段が収まるように)
-    const want = ARROW_H + IDX_H * 2 + PTR_H + (table ? TBL_GAP : 0) + 4 + unitRows * 16;
+    const want = ARROW_H + IDX_H * 2 + PTR_H + TBL_GAP + 4 + unitRows * 16;
     if (areaH < want) {
       const k = Math.max(0.45, areaH / want);
       ARROW_H *= k; IDX_H *= k; PTR_H *= k; GAP_MIN *= k;
     }
-    const fixedH = ARROW_H + IDX_H * 2 + PTR_H + (table ? TBL_GAP : 0) + 4;
+    const fixedH = ARROW_H + IDX_H * 2 + PTR_H + TBL_GAP + 4;
     // 横は必ず収める (64 文字をせまいパネルに出すときはセルが小さくなる → パネルを広げて見る)
     const cell = Math.min(44, availW / nCols, Math.max(6, (areaH - fixedH) / unitRows));
     const gapH = Math.max(GAP_MIN, cell * 0.9);
-    const contentH = ARROW_H + (table ? cell + TBL_GAP : 0) + IDX_H + cell + gapH + cell + IDX_H + PTR_H;
+    const contentH = ARROW_H + cell + TBL_GAP + IDX_H + cell + gapH + cell + IDX_H + PTR_H;
     const gridX = PAD_L + LBL_W + Math.max(0, (availW - nCols * cell) / 2);
     const colX  = (c) => gridX + c * cell;
 
     const topY    = areaY + Math.max(2, (areaH - contentH) / 2);
     const baseY   = topY + ARROW_H;                         // ずらし矢印の端点
     const tblY    = baseY;
-    const pIdxY   = baseY + (table ? cell + TBL_GAP : 0);
+    const pIdxY   = baseY + cell + TBL_GAP;
     const patY    = pIdxY + IDX_H;
     const txtY    = patY + cell + gapH;
     const tIdxY   = txtY + cell;
