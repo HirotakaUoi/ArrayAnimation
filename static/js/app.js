@@ -5,6 +5,7 @@
  *   "search" → target 入力あり・データ条件なし
  *   "sort"   → target 入力なし・データ条件 (ランダム/昇順/降順/…) あり
  *   "misc"   → target 入力なし・データ条件なし (固定 N)
+ *   "string" → テキスト T・パターン P の入力と「文字列」の種類 (ランダム/例/自由入力)
  */
 
 "use strict";
@@ -21,6 +22,36 @@ const DATA_CONDITIONS = [
   { id: 2, name: "降順" },
   { id: 3, name: "ほぼ昇順" },
 ];
+
+// ===== 文字列照合 (type: "string") ==================================
+const STR_MAX_TEXT    = 64;   // algorithms.py の STR_MAX_TEXT と合わせる
+const STR_MAX_PATTERN = 32;
+const STRING_KINDS = [
+  { id: "acgt",   name: "ランダム (ACGT の4種)",   alpha: "ACGT" },
+  { id: "ab",     name: "ランダム (A・B の2種)",   alpha: "AB" },
+  { id: "alnum",  name: "ランダム (英数字62種)",   alpha: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" },
+  { id: "worst",  name: "例: 最悪ケース (aaaaaaB)", text: "aaaaaaAaaaaaaCaaaaaaDaaaaaaEaaaaaaFaaaaaaaaaaaaaaB", pattern: "aaaaaaB" },
+  { id: "kmp",    name: "例: KMP の定番 (ABCDABD)", text: "ABC ABCDAB ABCDABCDABDE", pattern: "ABCDABD" },
+  { id: "custom", name: "自由入力" },
+];
+
+/** 種類に応じたテキストとパターンを作る。ランダムはパターンを必ず含む (長さ = データ数, 64 まで) */
+function _makeString(kindId, size) {
+  const kind = STRING_KINDS.find(k => k.id === kindId) || STRING_KINDS[0];
+  if (kind.text) return { text: kind.text, pattern: kind.pattern };
+  if (!kind.alpha) return null;
+  const L  = Math.max(4, Math.min(size, STR_MAX_TEXT));
+  const pl = Math.max(3, Math.min(10, Math.round(L / 4)));
+  const rc = () => kind.alpha[Math.floor(Math.random() * kind.alpha.length)];
+  const pat  = Array.from({ length: pl },     rc).join("");
+  const body = Array.from({ length: L - pl }, rc).join("");
+  const pos  = Math.floor(Math.random() * (body.length + 1));
+  return { text: body.slice(0, pos) + pat + body.slice(pos), pattern: pat };
+}
+
+function _isRandomKind(kindId) {
+  return !!STRING_KINDS.find(k => k.id === kindId)?.alpha;
+}
 
 // ===== スナップ設定 ================================================
 const SNAP_THRESHOLD = 15;
@@ -112,6 +143,10 @@ function applyGlobalToAll() {
   const sharedValues = Array.from({ length: size },
                                    () => Math.floor(Math.random() * maxVal) + 1);
 
+  // string 向け: 最初の文字列照合パネルの種類で 1 回だけ作り、全パネルで共有する
+  // (同じテキスト・パターンでアルゴリズムどうしを比べられるように)
+  let sharedStr = null;
+
   document.querySelectorAll(".panel").forEach(el => {
     const panel = el._panel;
     if (!panel) return;
@@ -125,6 +160,10 @@ function applyGlobalToAll() {
         panel._applySharedPreview(sharedValues, targetRaw);
       } else if (type === "sort") {
         el.querySelector(".sel-condition").value = condition;
+        panel._drawPreview();
+      } else if (type === "string") {
+        if (!sharedStr) sharedStr = panel._stringForShare();
+        panel._setString(sharedStr.kind, sharedStr.text, sharedStr.pattern);
         panel._drawPreview();
       } else {
         panel._drawPreview();
@@ -263,6 +302,10 @@ class ArrayPanel {
     this._lastFrame  = null;
     this._frameCount = 0;
     this._speed      = 0.1;
+    // 文字列照合: リセット・リサイズ・テーマ切替では作り直さない (種類・データ数の変更と 🎲 でのみ作り直す)
+    this._strKind    = "acgt";
+    this._strText    = null;
+    this._strPattern = null;
   }
 
   // ── DOM 構築 ────────────────────────────────────────────────────
@@ -328,12 +371,28 @@ class ArrayPanel {
         <label class="lbl-condition" style="display:none">データ条件
           <select class="sel-condition"></select>
         </label>
+        <label class="lbl-strkind" style="display:none">文字列
+          <select class="sel-strkind"></select>
+        </label>
+        <button class="btn btn-secondary btn-str-regen" style="display:none"
+                title="同じ種類で文字列を作り直す">🎲</button>
         <div class="speed-group">
           <label>速度</label>
           <input type="range" class="rng-speed" min="1" max="200" value="80"
                  title="大きいほど速い">
           <span class="speed-value">×1.0</span>
         </div>
+      </div>
+      <div class="params-row str-row" style="display:none">
+        <label class="lbl-str lbl-str-text">T
+          <input type="text" class="inp-text" maxlength="${STR_MAX_TEXT}" spellcheck="false"
+                 autocomplete="off" title="テキスト (${STR_MAX_TEXT} 文字まで)">
+        </label>
+        <label class="lbl-str lbl-str-pat">P
+          <input type="text" class="inp-pattern" maxlength="${STR_MAX_PATTERN}" spellcheck="false"
+                 autocomplete="off" title="パターン (${STR_MAX_PATTERN} 文字まで)">
+        </label>
+        <span class="str-error"></span>
       </div>
 
       <div class="controls-row">
@@ -371,6 +430,10 @@ class ArrayPanel {
     const selCond = this.el.querySelector(".sel-condition");
     DATA_CONDITIONS.forEach(c => selCond.appendChild(new Option(c.name, c.id)));
 
+    const selKind = this.el.querySelector(".sel-strkind");
+    STRING_KINDS.forEach(k => selKind.appendChild(new Option(k.name, k.id)));
+    selKind.value = this._strKind;
+
     const gSpeed = document.getElementById("global-speed")?.value;
     if (gSpeed) {
       this.el.querySelector(".rng-speed").value = gSpeed;
@@ -385,7 +448,70 @@ class ArrayPanel {
 
     this.el.querySelector(".lbl-target")   .style.display = type === "search" ? "" : "none";
     this.el.querySelector(".lbl-condition").style.display = type === "sort"   ? "" : "none";
-    // lbl-size は常に表示 (misc でも num_items は参照される)
+    // lbl-size は常に表示 (misc でも num_items は参照される。string ではランダムな文字列の長さ)
+    const isStr = (type === "string");
+    this.el.querySelector(".lbl-strkind")  .style.display = isStr ? "" : "none";
+    this.el.querySelector(".btn-str-regen").style.display = isStr ? "" : "none";
+    this.el.querySelector(".str-row")      .style.display = isStr ? "" : "none";
+    this.el.querySelector(".lbl-size").title =
+      isStr ? `ランダムな文字列の長さ (${STR_MAX_TEXT} 文字まで)` : "";
+    if (isStr && this._strText === null) this._regenString();
+  }
+
+  // ── 文字列照合: テキスト・パターン ─────────────────────────────
+  /** 入力の誤りを返す (問題なければ null)。文字数は Python と同じくコードポイント単位 */
+  _strError() {
+    const t = [...(this._strText ?? "")].length;
+    const p = [...(this._strPattern ?? "")].length;
+    if (t === 0)               return "テキスト T を入力してください";
+    if (p === 0)               return "パターン P を入力してください";
+    if (t > STR_MAX_TEXT)      return `T は ${STR_MAX_TEXT} 文字までです`;
+    if (p > STR_MAX_PATTERN)   return `P は ${STR_MAX_PATTERN} 文字までです`;
+    if (p > t)                 return "P が T より長くなっています";
+    return null;
+  }
+
+  _showStrStatus() {
+    const err = this._strError();
+    const sp  = this.el.querySelector(".str-error");
+    sp.textContent = err
+      ? `⚠ ${err}`
+      : `n = ${[...this._strText].length}, m = ${[...this._strPattern].length}`;
+    sp.classList.toggle("is-error", !!err);
+    // 🎲 はランダムの種類のときだけ意味がある
+    this.el.querySelector(".btn-str-regen").disabled = !_isRandomKind(this._strKind);
+  }
+
+  _setString(kind, text, pattern) {
+    this._strKind    = kind;
+    this._strText    = text;
+    this._strPattern = pattern;
+    this.el.querySelector(".sel-strkind").value = kind;
+    this.el.querySelector(".inp-text")   .value = text;
+    this.el.querySelector(".inp-pattern").value = pattern;
+    this._showStrStatus();
+  }
+
+  /** 選んでいる種類で作り直す (自由入力のときは今の文字列のまま) */
+  _regenString() {
+    const kind = this.el.querySelector(".sel-strkind").value;
+    if (kind === "custom") {
+      this._strKind = kind;
+      if (this._strText === null) this._setString(kind, "", "");
+      else this._showStrStatus();
+      return;
+    }
+    const size = Number(this.el.querySelector(".sel-size").value) || 16;
+    const s = _makeString(kind, size);
+    this._setString(kind, s.text, s.pattern);
+  }
+
+  /** 全パネル一括適用で共有する文字列 (ランダムならデータ数を反映して作り直す) */
+  _stringForShare() {
+    if (this.el.querySelector(".sel-strkind").value !== "custom" || this._strText === null) {
+      this._regenString();
+    }
+    return { kind: this._strKind, text: this._strText, pattern: this._strPattern };
   }
 
   // ── イベントバインド ─────────────────────────────────────────
@@ -405,7 +531,33 @@ class ArrayPanel {
     q(".sel-algo").addEventListener("change", () => {
       if (!this.isRunning) { this._updateParamVisibility(); this._drawPreview(); }
     });
-    q(".sel-size")     .addEventListener("change", () => { if (!this.isRunning) this._drawPreview(); });
+    q(".sel-size")     .addEventListener("change", () => {
+      if (this.isRunning) return;
+      // 文字列照合: ランダムの種類なら新しい長さで作り直す
+      if (_algoType(q(".sel-algo").value) === "string" && _isRandomKind(this._strKind)) {
+        this._regenString();
+      }
+      this._drawPreview();
+    });
+    q(".sel-strkind")  .addEventListener("change", () => {
+      this._regenString();
+      if (!this.isRunning) this._drawPreview();
+    });
+    q(".btn-str-regen").addEventListener("click", () => {
+      this._regenString();
+      if (!this.isRunning) this._drawPreview();
+    });
+    const onStrInput = () => {
+      // 手で書き換えたら「自由入力」に切り替える
+      this._strText    = q(".inp-text").value;
+      this._strPattern = q(".inp-pattern").value;
+      this._strKind    = "custom";
+      q(".sel-strkind").value = "custom";
+      this._showStrStatus();
+      if (!this.isRunning) this._drawPreview();
+    };
+    q(".inp-text")   .addEventListener("input", onStrInput);
+    q(".inp-pattern").addEventListener("input", onStrInput);
     q(".inp-target")   .addEventListener("change", () => { if (!this.isRunning) this._drawPreview(); });
     q(".sel-condition").addEventListener("change", () => { if (!this.isRunning) this._drawPreview(); });
 
@@ -574,6 +726,26 @@ class ArrayPanel {
       return;
     }
 
+    // string 型: パターンをテキストの先頭に合わせた状態を表示
+    if (type === "string") {
+      if (this._strText === null) this._regenString();
+      // (n・m や入力の誤りは入力欄の横に出す。キャンバス上部は「開始ボタンを押してください」と重なるため使わない)
+      const T = [...this._strText];
+      const P = [...this._strPattern];
+      this._previewCache = null;
+      new ArrayCanvas(canvas).draw({
+        objects: [{
+          id: "sm", type: "string_match",
+          text: T, pattern: P.length ? P : null, shift: 0,
+          cols: Math.max(T.length, P.length, 1),
+          text_label: "T", pattern_label: "P", weight: 3,
+        }],
+        texts: [],
+        finished: false,
+      });
+      return;
+    }
+
     const sorted     = !!(algo?.meta?.sorted);
     const showTarget = (type === "search");
     const tRaw       = this.el.querySelector(".inp-target").value.trim();
@@ -606,6 +778,15 @@ class ArrayPanel {
     const speed    = this._currentSpeed();
     const type     = _algoType(algoId);
 
+    if (type === "string") {
+      if (this._strText === null) this._regenString();
+      const err = this._strError();
+      if (err) {
+        this._setStatus(`入力エラー: ${err}`, "red");
+        return;
+      }
+    }
+
     let info;
     try {
       const body = { algorithm_id: algoId, num_items: numItems, speed };
@@ -625,6 +806,9 @@ class ArrayPanel {
         if (this._previewCache?.values) {
           body.data = this._previewCache.values;
         }
+      } else if (type === "string") {
+        body.text    = this._strText;
+        body.pattern = this._strPattern;
       }
       // misc: num_items だけ送れば OK
 

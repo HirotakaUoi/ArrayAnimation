@@ -9,6 +9,8 @@
  *   tape           – 無端テープ
  *   fib_tree       – フィボナッチ再帰木
  *   staircase      – 階段状テキスト (階乗再帰)
+ *   string_match   – 文字列照合 (上段パターン / 下段テキスト + 比較・ずらしの注釈)
+ *   kv_table       – キーと値の 2 段の表 (BMH のずらし表)
  */
 
 "use strict";
@@ -110,6 +112,8 @@ class ArrayCanvas {
           case "tape":          this._drawTape(obj, areaY, eachH);         break;
           case "fib_tree":      this._drawFibTree(obj, areaY, eachH);      break;
           case "staircase":     this._drawStaircase(obj, areaY, eachH);    break;
+          case "string_match":  this._drawStringMatch(obj, areaY, eachH);  break;
+          case "kv_table":      this._drawKvTable(obj, areaY, eachH);      break;
         }
         areaY += eachH;
       }
@@ -1096,6 +1100,320 @@ class ArrayCanvas {
       ctx.font      = `${fs}px monospace`;
       ctx.textAlign = "left";
       ctx.fillText(text, rowX + 4, rowY + rowH * 0.78);
+    }
+
+    ctx.restore();
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // string_match – 文字列照合
+  //   上から: ずらし矢印の帯 / 表 (KMP の PMT) / パターンの添字 / パターン /
+  //           比較の注釈 / テキスト / テキストの添字 / ポインタ
+  //   列 c の x 座標は全段共通 (パターンは shift 列目から並ぶ)
+  // ════════════════════════════════════════════════════════════════════
+  _drawStringMatch(obj, areaY, areaH) {
+    const {
+      text = [], pattern = null, shift = 0, cols = 0,
+      text_label = "T", pattern_label = "P",
+      text_hl = {}, pattern_hl = {}, compare = null,
+      ghost = null, arrow = null, table = null, pointers = [],
+      pattern_dim_from = null,
+    } = obj;
+    const ctx = this.ctx;
+    const cw  = this.cw;
+    const th  = _acTheme();
+    const n = text.length;
+    const m = pattern ? pattern.length : 0;
+    const nCols = Math.max(cols, n, shift + m, 1);
+
+    const C_DATA  = "#4a7ab8";   // データのセル枠
+    const C_TABLE = "#8a6ac8";   // 表のセル枠
+    const C_ARROW = "#ff9900";   // ずらしの注釈
+    const STATE = {
+      cmp: { color: "#ffd700", mark: "?" },
+      eq:  { color: "#44cc44", mark: "=" },
+      ne:  { color: "#ff4444", mark: "≠" },
+    };
+
+    ctx.save();
+
+    // ── 左のラベル列 ──
+    ctx.font = "bold 12px sans-serif";
+    const labels = [text_label, pattern ? pattern_label : "", table ? table.label : ""];
+    const LBL_W  = Math.ceil(Math.max(...labels.map(s => ctx.measureText(s).width))) + 14;
+    const PAD_L = 8, PAD_R = 10;
+    const availW = cw - PAD_L - LBL_W - PAD_R;
+
+    // ── 縦方向の配分 (パネル既定の高さでもセルが小さくなりすぎないよう余白は最小限) ──
+    let ARROW_H = 28, IDX_H = 12, PTR_H = 16, GAP_MIN = 16;
+    const TBL_GAP  = 3;
+    const unitRows = (table ? 1 : 0) + 2 + 0.9;          // 表 + パターン + テキスト + 比較の隙間
+    // パネルが低いときは、セルを 16px 確保できるところまで余白の帯を縮める (全段が収まるように)
+    const want = ARROW_H + IDX_H * 2 + PTR_H + (table ? TBL_GAP : 0) + 4 + unitRows * 16;
+    if (areaH < want) {
+      const k = Math.max(0.45, areaH / want);
+      ARROW_H *= k; IDX_H *= k; PTR_H *= k; GAP_MIN *= k;
+    }
+    const fixedH = ARROW_H + IDX_H * 2 + PTR_H + (table ? TBL_GAP : 0) + 4;
+    // 横は必ず収める (64 文字をせまいパネルに出すときはセルが小さくなる → パネルを広げて見る)
+    const cell = Math.min(44, availW / nCols, Math.max(6, (areaH - fixedH) / unitRows));
+    const gapH = Math.max(GAP_MIN, cell * 0.9);
+    const contentH = ARROW_H + (table ? cell + TBL_GAP : 0) + IDX_H + cell + gapH + cell + IDX_H + PTR_H;
+    const gridX = PAD_L + LBL_W + Math.max(0, (availW - nCols * cell) / 2);
+    const colX  = (c) => gridX + c * cell;
+
+    const topY    = areaY + Math.max(2, (areaH - contentH) / 2);
+    const baseY   = topY + ARROW_H;                         // ずらし矢印の端点
+    const tblY    = baseY;
+    const pIdxY   = baseY + (table ? cell + TBL_GAP : 0);
+    const patY    = pIdxY + IDX_H;
+    const txtY    = patY + cell + gapH;
+    const tIdxY   = txtY + cell;
+    const ptrY    = tIdxY + IDX_H;
+
+    const fs  = Math.max(6, Math.min(20, cell * 0.6));
+    const iFs = Math.max(7, Math.min(10, cell * 0.45));
+    const idxEvery = cell >= 14 ? 1 : cell >= 9 ? 5 : 10;
+
+    const drawCell = (x, y, ch, hl, border, dim = false) => {
+      ctx.save();
+      if (dim) ctx.globalAlpha = 0.3;
+      ctx.fillStyle = th.cellBg;
+      ctx.fillRect(x, y, cell - 1, cell);
+      if (hl) {
+        ctx.save(); ctx.globalAlpha *= 0.5;
+        ctx.fillStyle = hl; ctx.fillRect(x, y, cell - 1, cell);
+        ctx.restore();
+      }
+      ctx.strokeStyle = hl || border;
+      ctx.lineWidth   = hl ? 2.5 : 1.5;
+      ctx.strokeRect(x + 0.75, y + 0.75, cell - 2.5, cell - 1.5);
+      if (cell >= 7) {                     // これより小さいと文字は読めないので枠だけ
+        const isSpace = (ch === " ");
+        ctx.fillStyle    = isSpace ? th.indexLabelColor : th.cellText;
+        ctx.font         = `${fs}px monospace`;
+        ctx.textAlign    = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(isSpace ? "␣" : String(ch), x + cell / 2, y + cell / 2 + 1);
+      }
+      ctx.restore();
+    };
+    const drawIdx = (c, label, y, dim = false) => {
+      if (IDX_H < 8 || label % idxEvery !== 0) return;   // 帯が縮んで入らないときは省く
+      ctx.save();
+      if (dim) ctx.globalAlpha = 0.35;
+      ctx.fillStyle = th.indexLabelColor;
+      ctx.font = `${iFs}px sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(String(label), colX(c) + cell / 2, y + IDX_H / 2);
+      ctx.restore();
+    };
+    const drawLabel = (s, y) => {
+      ctx.fillStyle = th.valueLabelColor;
+      ctx.font = "bold 12px sans-serif";
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      ctx.fillText(s, gridX - 8, y + cell / 2);
+    };
+
+    // ── テキスト (下段) ──
+    drawLabel(text_label, txtY);
+    for (let c = 0; c < n; c++) {
+      drawCell(colX(c), txtY, text[c], text_hl[String(c)], C_DATA);
+      drawIdx(c, c, tIdxY);
+    }
+    // テキストの外 (このフレームでパターンが末尾からはみ出している分だけ): 破線の空セル
+    const overEnd = pattern
+      ? Math.max(shift + m, (ghost !== null && ghost !== undefined) ? ghost + m : 0)
+      : 0;
+    for (let c = n; c < Math.min(overEnd, nCols); c++) {
+      ctx.save();
+      ctx.fillStyle = th.cellEmptyBg;
+      ctx.fillRect(colX(c), txtY, cell - 1, cell);
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = th.edgeColor; ctx.lineWidth = 1.5;
+      ctx.strokeRect(colX(c) + 1, txtY + 1, cell - 3, cell - 2);
+      ctx.restore();
+    }
+    if (overEnd > n) {                     // テキストの終わりを示す縦線
+      ctx.save();
+      ctx.strokeStyle = th.valueLabelColor; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(colX(n) - 0.5, txtY - 3); ctx.lineTo(colX(n) - 0.5, txtY + cell + 3);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // ── 表 (KMP の PMT など。パターンと同じ列に並ぶ) ──
+    if (table) {
+      const { values = [], offset = 0, highlights: thl = {} } = table;
+      drawLabel(table.label || "", tblY);
+      for (let k = 0; k < values.length; k++) {
+        const v = values[k];
+        drawCell(colX(offset + k), tblY, (v === null || v === undefined) ? "" : String(v),
+                 thl[String(k)], C_TABLE);
+      }
+    }
+
+    if (pattern) {
+      drawLabel(pattern_label, patY);
+      // ── 移動前 / 移動先の位置 (破線。実体のパターンより下に描く) ──
+      if (ghost !== null && ghost !== undefined && ghost !== shift) {
+        for (let k = 0; k < m; k++) {
+          const x = colX(ghost + k);
+          ctx.save();
+          ctx.setLineDash([4, 3]);
+          ctx.strokeStyle = C_ARROW; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.9;
+          ctx.strokeRect(x + 1, patY + 1, cell - 3, cell - 2);
+          ctx.setLineDash([]);
+          ctx.globalAlpha = 0.35;
+          ctx.fillStyle = th.cellText;
+          ctx.font = `${fs}px monospace`;
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(pattern[k] === " " ? "␣" : String(pattern[k]), x + cell / 2, patY + cell / 2 + 1);
+          ctx.restore();
+        }
+      }
+      // ── パターン (上段) ──
+      for (let k = 0; k < m; k++) {
+        const dim = (pattern_dim_from !== null && k >= pattern_dim_from);
+        drawCell(colX(shift + k), patY, pattern[k], pattern_hl[String(k)], C_DATA, dim);
+        drawIdx(shift + k, k, pIdxY, dim);
+      }
+    }
+
+    // ── 比較の注釈 (上下のセルを結ぶ。データより上のレイヤ) ──
+    if (compare && pattern) {
+      const st = STATE[compare.state] || STATE.cmp;
+      const x  = colX(compare.col) + cell / 2;
+      const y1 = patY + cell + 2, y2 = txtY - 2;
+      ctx.strokeStyle = st.color; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(x, y1); ctx.lineTo(x, y2); ctx.stroke();
+      const r  = Math.max(5, Math.min(11, gapH * 0.4));
+      const my = (y1 + y2) / 2;
+      ctx.beginPath(); ctx.arc(x, my, r, 0, Math.PI * 2);
+      ctx.fillStyle = st.color; ctx.fill();
+      ctx.strokeStyle = th.canvasBg; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = "#111111";
+      ctx.font = `bold ${Math.round(r * 1.45)}px sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(st.mark, x, my + 1);
+    }
+
+    // ── ポインタ (テキストの添字の下。名前と値は矢印の右に) ──
+    for (const p of pointers) {
+      const x   = colX(p.col) + cell / 2;
+      const col = p.color || "#dd55dd";
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.moveTo(x, ptrY + 1); ctx.lineTo(x - 6, ptrY + 11); ctx.lineTo(x + 6, ptrY + 11);
+      ctx.closePath(); ctx.fill();
+      ctx.font = "bold 11px monospace";
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillText(`${p.label}=${p.col}`, x + 8, ptrY + 7);
+    }
+
+    // ── ずらし矢印 (最上段の帯。いちばん上のレイヤ) ──
+    if (arrow && arrow.from !== arrow.to) {
+      const x0 = colX(arrow.from) + cell / 2;
+      const x1 = colX(arrow.to)   + cell / 2;
+      const yB = baseY - 2;
+      const yC = topY + ARROW_H * 0.43;          // 帯の高さに合わせて曲線の頂点を決める
+      ctx.strokeStyle = C_ARROW; ctx.fillStyle = C_ARROW;
+      ctx.lineWidth = 3; ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(x0, yB);
+      ctx.bezierCurveTo(x0, yC, x1, yC, x1, yB - 8);
+      ctx.stroke();
+      ctx.beginPath();                                   // 矢尻 (移動先を指す)
+      ctx.moveTo(x1, yB + 1); ctx.lineTo(x1 - 6, yB - 9); ctx.lineTo(x1 + 6, yB - 9);
+      ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.arc(x0, yB, 3.5, 0, Math.PI * 2); ctx.fill();   // 起点
+      if (arrow.label) {
+        // ラベルは曲線の頂点に重ねる (背景を塗って線より手前に出す)
+        const apexY = 0.25 * yB + 0.75 * yC;
+        ctx.font = "bold 12px sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        const lx = (x0 + x1) / 2;
+        const tw = ctx.measureText(arrow.label).width;
+        ctx.fillStyle = th.canvasBg;
+        ctx.fillRect(lx - tw / 2 - 4, apexY - 8, tw + 8, 16);
+        ctx.strokeStyle = C_ARROW; ctx.lineWidth = 1.5;
+        ctx.strokeRect(lx - tw / 2 - 4, apexY - 8, tw + 8, 16);
+        ctx.fillStyle = C_ARROW;
+        ctx.fillText(arrow.label, lx, apexY + 1);
+      }
+    }
+
+    ctx.restore();
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // kv_table – キーと値の 2 段の表 (BMH のずらし表)
+  // ════════════════════════════════════════════════════════════════════
+  _drawKvTable(obj, areaY, areaH) {
+    const { label = "", keys = [], values = [], highlights = {},
+            row_labels = ["key", "value"] } = obj;
+    const k = keys.length;
+    if (k === 0) return;
+
+    const ctx = this.ctx;
+    const cw  = this.cw;
+    const th  = _acTheme();
+    const C_TABLE = "#8a6ac8";
+
+    ctx.save();
+    // 見出し (label) は表の右に置き、縦の余白を使わない
+    ctx.font = "bold 11px sans-serif";
+    const LBL_W  = Math.ceil(Math.max(...row_labels.map(s => ctx.measureText(s).width))) + 14;
+    ctx.font = "bold 12px sans-serif";
+    const TTL_W  = label ? Math.ceil(ctx.measureText(label).width) + 12 : 0;
+    const PAD_L = 8, PAD_R = 10, PAD_V = 4;
+    const availW = cw - PAD_L - LBL_W - PAD_R - TTL_W;
+    const cellW  = Math.min(48, availW / k);                 // 横は必ず収める
+    const cellH  = Math.max(14, Math.min(32, (areaH - PAD_V * 2) / 2));
+    const gridX  = PAD_L + LBL_W;
+    const gridY  = areaY + PAD_V + Math.max(0, (areaH - PAD_V * 2 - cellH * 2) / 2);
+
+    if (label) {
+      ctx.fillStyle = th.valueLabelColor;
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillText(label, gridX + k * cellW + 10, gridY + cellH);
+    }
+
+    const fitText = (s, x, y, w, h, bold) => {
+      let size = Math.max(8, Math.min(16, h * 0.55));
+      ctx.font = `${bold ? "bold " : ""}${size}px monospace`;
+      while (size > 8 && ctx.measureText(s).width > w - 4) {
+        size -= 1;
+        ctx.font = `${bold ? "bold " : ""}${size}px monospace`;
+      }
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(s, x + w / 2, y + h / 2 + 1);
+    };
+
+    for (let r = 0; r < 2; r++) {
+      const y = gridY + r * cellH;
+      ctx.fillStyle = th.valueLabelColor;
+      ctx.font = "bold 11px sans-serif";
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      ctx.fillText(row_labels[r] ?? "", gridX - 8, y + cellH / 2);
+      for (let c = 0; c < k; c++) {
+        const x  = gridX + c * cellW;
+        const hl = highlights[String(c)];
+        ctx.fillStyle = r === 0 ? th.cellEmptyBg : th.cellBg;
+        ctx.fillRect(x, y, cellW - 1, cellH);
+        if (hl) {
+          ctx.save(); ctx.globalAlpha = 0.5;
+          ctx.fillStyle = hl; ctx.fillRect(x, y, cellW - 1, cellH);
+          ctx.restore();
+        }
+        ctx.strokeStyle = hl || C_TABLE;
+        ctx.lineWidth   = hl ? 2.5 : 1.5;
+        ctx.strokeRect(x + 0.75, y + 0.75, cellW - 2.5, cellH - 1.5);
+        const v = r === 0 ? keys[c] : values[c];
+        ctx.fillStyle = th.cellText;
+        fitText((v === null || v === undefined) ? "" : String(v), x, y, cellW, cellH, r === 0);
+      }
     }
 
     ctx.restore();

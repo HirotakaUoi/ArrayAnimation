@@ -47,6 +47,8 @@ class StartParams(BaseModel):
     target:         Optional[int] = None        # 探索対象 (search 用)
     data:           Optional[list[int]] = None  # 初期データ (search / sort 共用)
     data_condition: int   = 0         # 0=ランダム 1=昇順 2=降順 3=ほぼ昇順 (sort 用)
+    text:           Optional[str] = None        # テキスト (string 用)
+    pattern:        Optional[str] = None        # パターン (string 用)
 
 
 @app.post("/api/start")
@@ -60,6 +62,9 @@ def start_session(params: StartParams):
     if algo_type == "misc":
         # misc: num_items だけ渡す (factorial/fibonacci は内部で cap)
         generator = algo_fn(params.num_items)
+    elif algo_type == "string":
+        # string: テキストとパターンを渡す (未指定・不正ならアルゴリズム側でランダム生成)
+        generator = algo_fn(params.num_items, text=params.text, pattern=params.pattern)
     elif algo_type == "sort":
         # sort: data_condition と data を渡す (target は不要)
         generator = algo_fn(

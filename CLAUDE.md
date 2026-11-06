@@ -99,6 +99,25 @@ _staircase(id, rows, label="")
 # rows: [{"depth": int, "text": str, "color": str}, ...]
 ```
 
+### `string_match` — 文字列照合（上段パターン / 下段テキスト）
+```python
+_sm(text, pattern, shift, label_t="T", label_p="P", t_hl=None, p_hl=None,
+    compare=None, ghost=None, arrow=None, table=None, ptrs=None, p_dim_from=None, weight=3)
+```
+- 列 c の x 座標は全段共通。パターンは `shift` 列目から並ぶ（`pattern=None` で上段なし）
+- `compare`: `{"col": c, "state": "cmp"|"eq"|"ne"}` — 上下のセルを結ぶ線と ?/=/≠ の印（黄/緑/赤）
+- `ghost`: パターンの移動前 / 移動先を破線で示す列。`arrow`: `{"from", "to", "label"}` ずらしの矢印（橙、最上段の帯）
+- `table`: `_sm_table(label, values, offset, hl)` — パターンの上に同じ列で並べる表（KMP の PMT。パターンと一緒に動く）
+- `ptrs`: `[_sptr(col, "i")]` テキストの添字の下のポインタ / `p_dim_from`: この添字以降のパターンを薄く表示
+- `cols`（列数）は `_string_run()` が全フレーム共通の最大値にそろえる（パターンが末尾からはみ出しても表示がずれない）
+- パネルが低いときは余白の帯を縮めて全段を収める
+
+### `kv_table` — キーと値の 2 段の表（BMH のずらし表）
+```python
+_kv_table(id, label, keys, values, hl=None, row_labels=("文字 c", "表[c]"), weight=1)
+```
+- `hl`: `{列の添字: "色"}`。見出し `label` は表の右に置く（縦の余白を使わない）
+
 ---
 
 ## `weight` の使い方
@@ -118,7 +137,8 @@ _staircase(id, rows, label="")
 ## アルゴリズム追加手順
 
 1. `algorithms.py` に **ジェネレータ関数**を実装
-   - シグネチャ: `def my_algo(n, **kwargs)` (sort/misc) または `def my_algo(n, target=None, data=None)` (search)
+   - シグネチャ: `def my_algo(n, **kwargs)` (sort/misc)、`def my_algo(n, target=None, data=None)` (search)、
+     `def my_algo(n, text=None, pattern=None, **kwargs)` (string)
    - 最低 1 フレーム yield すること（`finished=True` のフレームで終了）
 
 2. `AlgorithmList` に登録（ファイル末尾）:
@@ -129,6 +149,10 @@ _staircase(id, rows, label="")
      - `search`: target 入力を表示、data_condition を非表示
      - `sort`: target を非表示、data_condition を表示
      - `misc`: 両方非表示
+     - `string`: テキスト T・パターン P の入力欄と「文字列」の種類（ランダム3種 / 元の Python 版の例2つ / 自由入力）と 🎲 を表示。
+       データ数はランダムな文字列の長さ（64 まで）。T は 64 文字・P は 32 文字まで（`STR_MAX_TEXT` / `STR_MAX_PATTERN`、
+       algorithms.py と app.js で同じ値）。リセット・リサイズ・テーマ切替では文字列を作り直さない。
+       「全パネルへ適用」は最初の文字列照合パネルの種類で 1 回だけ作り、全パネルで同じ文字列を共有する（アルゴリズムの比較用）
 
 3. `_make_sort_data()` を使うと `data_condition`（ランダム/昇順/降順/ほぼ昇順）に対応できる
 
@@ -193,11 +217,12 @@ ArrayAnimation/
 
 ---
 
-## 現在実装済みのアルゴリズム（17本）
+## 現在実装済みのアルゴリズム（20本）
 
 | カテゴリ | アルゴリズム |
 |---|---|
 | 探索 | 線形探索(基本), 線形探索(番兵法), 線形探索(整列済み), 二分探索(反復), 二分探索(再帰) |
+| 文字列照合 | 力まかせ法, KMP 法, BMH 法（ルートの `PatternMatchingAnimation.py` の Web 移植。元の版は残してある） |
 | ソート | マージソート(反復), マージソート(再帰), マージソート(3テープ), ヒープソート, バケツソート, 基数ソート(LSD), ノームソート(1テープ) |
 | その他 | 階乗(反復), 階乗(再帰), フィボナッチ(反復), フィボナッチ(再帰), フィボナッチ(メモ化) |
 
@@ -207,10 +232,10 @@ ArrayAnimation/
 
 | ファイル | バージョン |
 |---|---|
-| `static/js/app.js` | **v19** |
-| `static/js/array_canvas.js` | **v20** |
+| `static/js/app.js` | **v20** |
+| `static/js/array_canvas.js` | **v21** |
 | `static/js/ws_client.js` | **v2** |
-| `static/css/style.css` | **v5** |
+| `static/css/style.css` | **v6** |
 
 ---
 
@@ -218,6 +243,7 @@ ArrayAnimation/
 
 | 日付 | 内容 |
 |---|---|
+| 2026-11-06 | **文字列照合を追加**（力まかせ法 / KMP 法 / BMH 法の3本、計20本）。ルートの Matplotlib 版 `PatternMatchingAnimation.py`（変更なし）の Web 移植。新しい型 `type: "string"` と描画オブジェクト `string_match`・`kv_table` を追加。比較は上下のセルを結ぶ ?/=/≠ の印、ずらしは「移動前→移動後」の2フレームで破線の位置と橙の矢印を示し、KMP は PMT の作成（P 自身をずらして接頭辞と比べる）→照合（PMT がパターンと一緒に動き、一致済みの接頭辞を比べずに続ける部分を水色で表示）、BMH はずらし表の作成→末尾からの照合→表の参照、の順に見せる。結果・変化のフレームは2枚ずつ出す（速度 ×0.5 でも見えるように）。比較回数・ずらし回数を表示。元の版の不具合2件を移植時に修正: KMP の表の作成で不一致かつ j > 0 のとき同じ位置で比べ直していなかった（P = "ABAABX" の表が誤り、照合で一致を見落とす）／BMH のずらし量を T[i] ではなく P[p] で引いていた（常に1文字ずつしか進まない）。3000通りのランダム入力で3本とも Python の `str.find` と結果が一致することを確認 (app.js v19→v20, array_canvas.js v20→v21, style.css v5→v6) |
 | 2026-10-28 | 完了後に「全パネルへ適用」・アルゴリズム/データ数/初期状態/target の変更でプレビューを差し替えたあと、パネルのリサイズやテーマ切替をすると**前回の終了状態に戻ってしまう**バグを修正。プレビュー描画（`_drawPreviewOnCanvas` / `_applySharedPreview`）で前回の終了フレーム `_lastFrame` を破棄していなかったため、`_onResize` / `_applyTheme` がそれを描き直していた。プレビュー描画時に `_lastFrame` を破棄するよう変更（v3 で同日に直した不具合と同じ原因）。差し替えていなければ終了状態を保持すること・途中停止時のフレームを保持することは従来どおり。ブラウザ実機（2パネル・描画フック）で修正前の再現と修正後の解消を確認 (app.js v18→v19) |
 | 2026-10-27 (2) | Python を uv 管理の **3.14.10** に更新（3.14.9 から。セキュリティ修正3件）。依存パッケージは変更なし（すでに最新）。アプリのコード変更なし。venv は relocatable で作り直し。全17アルゴリズムが完走し、全フレームの内容が更新前と完全一致することを確認 |
 | 2026-10-27 | Python を uv 管理の **3.14.9** に更新（3.14.4 から。セキュリティ修正32件）し、依存パッケージを最新に更新（fastapi 0.162.0 / starlette 1.10.0 / uvicorn 0.54.0 / websockets 17.3 / pydantic 2.14.1。starlette・anyio・idna の既知の脆弱性8件を解消）。アプリのコード変更なし。venv は relocatable で作り直し。全17アルゴリズムが完走し、全フレームの内容が更新前と完全一致することを確認 |

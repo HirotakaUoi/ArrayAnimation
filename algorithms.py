@@ -9,6 +9,8 @@ algorithms.py – Web 向けアルゴリズムジェネレータ (ArrayAnimation
   tape           – 無端テープ
   fib_tree       – フィボナッチ再帰木
   staircase      – 階段状テキスト (階乗再帰)
+  string_match   – 文字列照合 (上段パターン / 下段テキスト)
+  kv_table       – キーと値の 2 段の表 (BMH のずらし表)
 """
 
 from random import randint, random as _rand, sample as _sample
@@ -268,6 +270,447 @@ def binary_search_recursive(n, target=None, data=None):
             yield from rec(center + 1, last, new_fills, depth + 1)
 
     yield from rec(0, N - 1, [], 0)
+
+
+# ===========================================================================
+# 文字列照合 (type: "string")
+#   ルートの PatternMatchingAnimation.py (Matplotlib 版) の Web 移植。
+#   - 力まかせ法 / KMP 法 / BMH 法 の 3 本
+#   - 元の版の不具合はこちらで修正済み:
+#       KMP: 表の作成で「不一致かつ j > 0」のとき同じ i で比較し直していなかった
+#            (例: P = "ABAABX" の表が [-1,0,0,1,0,0] になり、照合で一致を見落とす)
+#       BMH: ずらし量を不一致になったテキストの文字 T[i] ではなく P[p] で引いていた
+#            (ずらし量が常に 1 になり、力まかせ法と同じ動きになっていた)
+# ===========================================================================
+
+STR_MAX_TEXT    = 64     # テキストの最大長 (これ以上はセルが小さくなりすぎる)
+STR_MAX_PATTERN = 32
+_STR_HOLD       = 2      # 結果・変化のフレームを保持する枚数 (速度 ×0.5 でも見えるように)
+
+_SC_CMP   = "yellow"     # 比較中
+_SC_EQ    = "#44cc44"    # 一致
+_SC_NE    = "#ff4444"    # 不一致
+_SC_FOUND = "#ff4444"    # 発見 (探索成功の慣例色)
+_SC_SET   = "#66ddff"    # 表に書き込んだ値 / 比較せずに一致とわかっている部分
+_SC_LOOK  = "#ff9900"    # 表を参照 / ずらし
+
+
+def _sm(text, pattern, shift, label_t="T", label_p="P", t_hl=None, p_hl=None,
+        compare=None, ghost=None, arrow=None, table=None, ptrs=None,
+        p_dim_from=None, weight=3):
+    """文字列照合の描画オブジェクト (type: string_match)
+
+    text / pattern – 下段 (テキスト) / 上段 (パターン) の文字列。pattern=None で上段なし
+    shift          – パターンの先頭を置く列 (テキストの添字)
+    compare        – {"col": 列, "state": "cmp"|"eq"|"ne"} 上下のセルを結ぶ比較の注釈
+    ghost          – パターンの「移動前 / 移動先」を破線で示す列
+    arrow          – {"from": 列, "to": 列, "label": str} パターンのずらしを示す矢印
+    table          – {"label", "values", "offset", "highlights"} パターンの上に並べる表 (KMP の PMT)
+    ptrs           – [{"col", "label", "color"}] テキストの下に出すポインタ
+    p_dim_from     – この添字以降のパターンのセルを薄く表示
+    cols           – 全フレーム共通の列数 (_string_run が後から設定する)
+    """
+    return {
+        "id": "sm", "type": "string_match",
+        "text": list(text), "pattern": list(pattern) if pattern is not None else None,
+        "shift": int(shift), "cols": 0,
+        "text_label": label_t, "pattern_label": label_p,
+        "text_hl": {str(k): v for k, v in (t_hl or {}).items()},
+        "pattern_hl": {str(k): v for k, v in (p_hl or {}).items()},
+        "compare": compare, "ghost": ghost, "arrow": arrow, "table": table,
+        "pointers": list(ptrs or []), "pattern_dim_from": p_dim_from,
+        "weight": weight,
+    }
+
+
+def _sm_table(label, values, offset, hl=None):
+    return {"label": label, "values": list(values), "offset": int(offset),
+            "highlights": {str(k): v for k, v in (hl or {}).items()}}
+
+
+def _kv_table(id, label, keys, values, hl=None, row_labels=("文字 c", "表[c]"), weight=1):
+    """キーと値の 2 段の表 (type: kv_table) – BMH のずらし表用"""
+    return {
+        "id": id, "type": "kv_table", "label": label,
+        "keys": [str(k) for k in keys], "values": list(values),
+        "highlights": {str(k): v for k, v in (hl or {}).items()},
+        "row_labels": list(row_labels), "weight": weight,
+    }
+
+
+def _sptr(col, label, color="#dd55dd"):
+    return {"col": int(col), "label": str(label), "color": color}
+
+
+def _ch(c):
+    """メッセージ用の 1 文字表示 (空白は ␣)"""
+    return "␣" if c == " " else c
+
+
+def _hold(frame, k=_STR_HOLD):
+    for _ in range(k):
+        yield frame
+
+
+def _str_inputs(n, text, pattern):
+    """テキストとパターンを決める。未指定・不正ならランダム (ACGT) に置き換える"""
+    if not text:
+        L  = max(4, min(int(n), STR_MAX_TEXT))
+        pl = max(3, min(10, round(L / 4)))
+        pat  = "".join("ACGT"[randint(0, 3)] for _ in range(pl))
+        body = [("ACGT"[randint(0, 3)]) for _ in range(L - pl)]
+        pos  = randint(0, len(body))
+        text = "".join(body[:pos]) + pat + "".join(body[pos:])
+        if not pattern:
+            pattern = pat
+    text = str(text)[:STR_MAX_TEXT]
+    if not pattern or len(pattern) > len(text) or len(pattern) > STR_MAX_PATTERN:
+        pl = max(1, min(len(text), STR_MAX_PATTERN, max(3, round(len(text) / 4))))
+        s  = randint(0, len(text) - pl)
+        pattern = text[s:s + pl]
+    return text, str(pattern)
+
+
+def _string_run(frames):
+    """全フレームを作ってから、列数 cols を全フレーム共通の値にそろえて流す。
+    (パターンが末尾からはみ出す位置まで進むことがあるため、表示がずれないよう最大値に合わせる)"""
+    frames = list(frames)
+    need = 1
+    for fr in frames:
+        for o in fr["objects"]:
+            if o["type"] != "string_match":
+                continue
+            pm = len(o["pattern"]) if o["pattern"] else 0
+            need = max(need, len(o["text"]), o["shift"] + pm)
+            if o["ghost"] is not None:
+                need = max(need, o["ghost"] + pm)
+            for p in o["pointers"]:
+                need = max(need, p["col"] + 1)
+            if o["table"]:
+                need = max(need, o["table"]["offset"] + len(o["table"]["values"]))
+    for fr in frames:
+        for o in fr["objects"]:
+            if o["type"] == "string_match":
+                o["cols"] = need
+    yield from frames
+
+
+def _found_frames(make, i, m):
+    """発見時: 一致した範囲を点滅させてから完了フレーム"""
+    t_hl = {i + k: _SC_FOUND for k in range(m)}
+    p_hl = {k: _SC_FOUND for k in range(m)}
+    for _ in range(2):
+        yield make(t_hl={i + k: _SC_EQ for k in range(m)}, p_hl={k: _SC_EQ for k in range(m)})
+        yield make(t_hl=t_hl, p_hl=p_hl)
+    fr = make(t_hl=t_hl, p_hl=p_hl)
+    fr["finished"] = True
+    fr["found"] = True
+    yield fr
+
+
+# ---------------------------------------------------------------------------
+# 力まかせ法 (素朴法)
+# ---------------------------------------------------------------------------
+
+def string_match_brute_force(n, text=None, pattern=None, **kwargs):
+    T, P = _str_inputs(n, text, pattern)
+    yield from _string_run(_bf_frames(T, P))
+
+
+def _bf_frames(T, P):
+    n, m = len(T), len(P)
+    st = {"cmp": 0, "shift": 0}
+
+    def F(i, msg, color="lightgreen", **kw):
+        info = {"message": f"比較 {st['cmp']} 回 ・ ずらし {st['shift']} 回", "color": "cyan"}
+        return _f([_sm(T, P, i, ptrs=[_sptr(i, "i")], **kw)],
+                  [{"message": msg, "color": color}, info])
+
+    yield F(0, "パターンをテキストの先頭 (i = 0) に合わせ、左から 1 文字ずつ比べる", color="white")
+    for i in range(n - m + 1):
+        for j in range(m):
+            ok_t = {i + k: _SC_EQ for k in range(j)}
+            ok_p = {k: _SC_EQ for k in range(j)}
+            st["cmp"] += 1
+            c, d = T[i + j], P[j]
+            yield F(i, f"T[{i + j}] = '{_ch(c)}' と P[{j}] = '{_ch(d)}' を比較  (i = {i}, j = {j})",
+                    t_hl={**ok_t, i + j: _SC_CMP}, p_hl={**ok_p, j: _SC_CMP},
+                    compare={"col": i + j, "state": "cmp"})
+            if c == d:
+                yield from _hold(F(i, f"'{_ch(c)}' = '{_ch(d)}' 一致 → 次の文字へ (j = {j + 1})",
+                                   t_hl={**ok_t, i + j: _SC_EQ}, p_hl={**ok_p, j: _SC_EQ},
+                                   compare={"col": i + j, "state": "eq"}))
+                continue
+            yield from _hold(F(i, f"'{_ch(c)}' ≠ '{_ch(d)}' 不一致", color="orange",
+                               t_hl={**ok_t, i + j: _SC_NE}, p_hl={**ok_p, j: _SC_NE},
+                               compare={"col": i + j, "state": "ne"}))
+            break
+        else:
+            # 全文字一致
+            yield from _found_frames(
+                lambda t_hl, p_hl: F(i, f"一致!  T[{i}..{i + m - 1}] = P   (i = {i} で発見)", color="red",
+                                     t_hl=t_hl, p_hl=p_hl),
+                i, m)
+            return
+        if i < n - m:
+            st["shift"] += 1
+            arw = {"from": i, "to": i + 1, "label": "+1"}
+            yield from _hold(F(i, "パターンを 1 文字右へずらす (一致していた分もやり直し)", color="orange",
+                               ghost=i + 1, arrow=arw))
+            yield from _hold(F(i + 1, f"i = {i + 1}: P の先頭から比べ直す", color="orange",
+                               ghost=i, arrow=arw))
+    last = F(n - m, "テキストの末尾まで調べたが、パターンは見つからない", color="red")
+    last["finished"] = True
+    last["found"] = False
+    yield last
+
+
+# ---------------------------------------------------------------------------
+# KMP 法 (Knuth-Morris-Pratt)
+#   PMT[j] = P[0..j-1] の「接頭辞 = 接尾辞」となる最長の長さ (PMT[0] = -1)
+#   不一致のときは j - PMT[j] 文字ずらし、j = PMT[j] から比較を続ける
+# ---------------------------------------------------------------------------
+
+def string_match_kmp(n, text=None, pattern=None, **kwargs):
+    T, P = _str_inputs(n, text, pattern)
+    yield from _string_run(_kmp_frames(T, P))
+
+
+def _kmp_frames(T, P):
+    n, m = len(T), len(P)
+    st = {"build": 0, "cmp": 0, "shift": 0}
+    pmt = [None] * m
+
+    # ── 1. PMT の作成: P 自身を右にずらしながら、接頭辞と比べる ─────────
+    def B(msg, color="lightgreen", shift=0, pat=True, t_hl=None, p_hl=None, tbl_hl=None,
+          compare=None, ghost=None, arrow=None, dim=None):
+        info = {"message": f"PMT の作成: 比較 {st['build']} 回", "color": "cyan"}
+        obj = _sm(P, P if pat else None, shift, label_t="P", label_p="接頭辞",
+                  t_hl=t_hl, p_hl=p_hl, compare=compare, ghost=ghost, arrow=arrow,
+                  table=_sm_table("PMT", pmt, 0, tbl_hl), p_dim_from=dim)
+        return _f([obj], [{"message": msg, "color": color}, info])
+
+    yield B("まず PMT (部分一致表) を作る: PMT[j] = P[0..j-1] の接頭辞と接尾辞が一致する最長の長さ",
+            color="white", pat=False)
+    pmt[0] = -1
+    yield from _hold(B("PMT[0] = -1 (定義: 先頭で不一致なら 1 文字ずらす)", pat=False, tbl_hl={0: _SC_SET}))
+    if m > 1:
+        pmt[1] = 0
+        yield from _hold(B("PMT[1] = 0 (1 文字では、接頭辞 = 接尾辞 となる部分はない)",
+                           pat=False, tbl_hl={1: _SC_SET}))
+    i, j = 2, 0
+    prev_shift = None
+    while i < m:
+        sh = i - 1 - j                       # P[j] が P[i-1] の真上に来るように置く
+        ok_t = {sh + k: _SC_EQ for k in range(j)}
+        ok_p = {k: _SC_EQ for k in range(j)}
+        moved = prev_shift is not None and prev_shift != sh
+        st["build"] += 1
+        a, b = P[i - 1], P[j]
+        yield B(f"PMT[{i}] を求める: P[{i - 1}] = '{_ch(a)}' と P[{j}] = '{_ch(b)}' を比較  (i = {i}, j = {j})",
+                shift=sh, t_hl={**ok_t, i - 1: _SC_CMP}, p_hl={**ok_p, j: _SC_CMP},
+                tbl_hl={i: _SC_CMP}, compare={"col": i - 1, "state": "cmp"}, dim=j + 1,
+                ghost=prev_shift if moved else None,
+                arrow={"from": prev_shift, "to": sh, "label": f"+{sh - prev_shift}"} if moved else None)
+        prev_shift = sh
+        if a == b:
+            yield from _hold(B(f"'{_ch(a)}' = '{_ch(b)}' 一致 → 接頭辞が 1 文字のびる", shift=sh,
+                               t_hl={**ok_t, i - 1: _SC_EQ}, p_hl={**ok_p, j: _SC_EQ},
+                               tbl_hl={i: _SC_CMP}, compare={"col": i - 1, "state": "eq"}, dim=j + 1))
+            j += 1
+            pmt[i] = j
+            yield from _hold(B(f"PMT[{i}] = j = {j}", shift=sh,
+                               t_hl={sh + k: _SC_EQ for k in range(j)}, p_hl={k: _SC_EQ for k in range(j)},
+                               tbl_hl={i: _SC_SET}, dim=j))
+            i += 1
+        elif j > 0:
+            yield from _hold(B(f"'{_ch(a)}' ≠ '{_ch(b)}' 不一致 → j = PMT[{j}] で短い接頭辞に切り替える",
+                               color="orange", shift=sh,
+                               t_hl={**ok_t, i - 1: _SC_NE}, p_hl={**ok_p, j: _SC_NE},
+                               tbl_hl={j: _SC_LOOK}, compare={"col": i - 1, "state": "ne"}, dim=j + 1))
+            nj  = pmt[j]
+            nsh = i - 1 - nj
+            arw = {"from": sh, "to": nsh, "label": f"j: {j} → {nj}"}
+            yield from _hold(B(f"j = PMT[{j}] = {nj}: 接頭辞を右へずらし、同じ P[{i - 1}] と比べ直す",
+                               color="orange", shift=sh, t_hl=ok_t, p_hl=ok_p,
+                               tbl_hl={j: _SC_LOOK}, dim=j + 1, ghost=nsh, arrow=arw))
+            yield from _hold(B(f"j = {nj}", color="orange", shift=nsh,
+                               t_hl={nsh + k: _SC_EQ for k in range(nj)}, p_hl={k: _SC_EQ for k in range(nj)},
+                               tbl_hl={j: _SC_LOOK}, dim=nj + 1, ghost=sh, arrow=arw))
+            prev_shift = nsh
+            j = nj
+        else:
+            yield from _hold(B(f"'{_ch(a)}' ≠ '{_ch(b)}' 不一致 (j = 0)", color="orange", shift=sh,
+                               t_hl={i - 1: _SC_NE}, p_hl={0: _SC_NE},
+                               tbl_hl={i: _SC_CMP}, compare={"col": i - 1, "state": "ne"}, dim=1))
+            pmt[i] = 0
+            yield from _hold(B(f"PMT[{i}] = 0 (一致する接頭辞なし)", shift=sh, tbl_hl={i: _SC_SET}, dim=0))
+            i += 1
+    yield from _hold(B("PMT が完成: " + "  ".join(f"[{k}]={v}" for k, v in enumerate(pmt)),
+                       color="white", pat=False))
+
+    # ── 2. 照合: PMT はパターンと一緒に動く ──────────────────────────
+    def F(i, j, msg, color="lightgreen", tbl_hl=None, **kw):
+        info = {"message": f"照合: 比較 {st['cmp']} 回 ・ ずらし {st['shift']} 回"
+                           f"   (PMT の作成: 比較 {st['build']} 回)", "color": "cyan"}
+        obj = _sm(T, P, i, table=_sm_table("PMT", pmt, i, tbl_hl), ptrs=[_sptr(i, "i")], **kw)
+        return _f([obj], [{"message": msg, "color": color}, info])
+
+    i = j = 0
+    yield from _hold(F(0, 0, "照合開始: パターンをテキストの先頭 (i = 0) に合わせる", color="white"))
+    while i + j < n:
+        ok_t = {i + k: _SC_EQ for k in range(j)}
+        ok_p = {k: _SC_EQ for k in range(j)}
+        st["cmp"] += 1
+        c, d = T[i + j], P[j]
+        yield F(i, j, f"T[{i + j}] = '{_ch(c)}' と P[{j}] = '{_ch(d)}' を比較  (i = {i}, j = {j})",
+                t_hl={**ok_t, i + j: _SC_CMP}, p_hl={**ok_p, j: _SC_CMP},
+                compare={"col": i + j, "state": "cmp"})
+        if c == d:
+            yield from _hold(F(i, j, f"'{_ch(c)}' = '{_ch(d)}' 一致 → 次の文字へ (j = {j + 1})",
+                               t_hl={**ok_t, i + j: _SC_EQ}, p_hl={**ok_p, j: _SC_EQ},
+                               compare={"col": i + j, "state": "eq"}))
+            j += 1
+            if j == m:
+                yield from _found_frames(
+                    lambda t_hl, p_hl: F(i, j, f"一致!  T[{i}..{i + m - 1}] = P   (i = {i} で発見)", color="red",
+                                         t_hl=t_hl, p_hl=p_hl),
+                    i, m)
+                return
+            continue
+        yield from _hold(F(i, j, f"'{_ch(c)}' ≠ '{_ch(d)}' 不一致 → PMT[{j}] = {pmt[j]} を見る", color="orange",
+                           t_hl={**ok_t, i + j: _SC_NE}, p_hl={**ok_p, j: _SC_NE},
+                           tbl_hl={j: _SC_LOOK}, compare={"col": i + j, "state": "ne"}))
+        s  = j - pmt[j]
+        nj = pmt[j] if j > 0 else 0
+        ni = i + s
+        st["shift"] += 1
+        arw = {"from": i, "to": ni, "label": f"+{s}"}
+        yield from _hold(F(i, j, f"j - PMT[j] = {j} - ({pmt[j]}) = {s} 文字右へずらす", color="orange",
+                           t_hl=ok_t, p_hl=ok_p, tbl_hl={j: _SC_LOOK}, ghost=ni, arrow=arw))
+        if nj > 0:
+            msg = f"先頭 {nj} 文字は一致しているとわかっている → 比べずに P[{nj}] から続ける (j = {nj})"
+        else:
+            msg = f"i = {ni}: P の先頭から比べる (j = 0)"
+        yield from _hold(F(ni, nj, msg, color="orange",
+                           t_hl={ni + k: _SC_SET for k in range(nj)}, p_hl={k: _SC_SET for k in range(nj)},
+                           tbl_hl={j: _SC_LOOK}, ghost=i, arrow=arw))
+        i, j = ni, nj
+    last = F(i, j, f"テキストの末尾に達した (i + j = {i + j} = n) → パターンは見つからない", color="red")
+    last["finished"] = True
+    last["found"] = False
+    yield last
+
+
+# ---------------------------------------------------------------------------
+# BMH 法 (Boyer-Moore-Horspool)
+#   パターンの末尾から左へ比べ、不一致ならずらし表で大きくずらす。
+#   ずらし表[c] = m - 1 - (P の中で c が最後に現れる位置)、P にない文字は m
+#   不一致の位置 i (テキスト) / p (パターン) から  i += max(表[T[i]], m - p)
+# ---------------------------------------------------------------------------
+
+def string_match_bmh(n, text=None, pattern=None, **kwargs):
+    T, P = _str_inputs(n, text, pattern)
+    yield from _string_run(_bmh_frames(T, P))
+
+
+def _bmh_frames(T, P):
+    n, m = len(T), len(P)
+    st = {"cmp": 0, "shift": 0}
+    keys = []
+    for c in P:
+        if c not in keys:
+            keys.append(c)
+    vals = {c: None for c in keys}
+    OTHER = len(keys)                      # 表の「その他」列の添字
+
+    def kidx(c):
+        return keys.index(c) if c in keys else OTHER
+
+    def tbl(key=None, color=_SC_SET):
+        ks = [_ch(c) for c in keys] + ["その他"]
+        vs = [vals[c] for c in keys] + [m]
+        return _kv_table("bmh_table", "ずらし表", ks, vs,
+                         hl={key: color} if key is not None else None)
+
+    def F(start, msg, color="lightgreen", key=None, key_color=_SC_SET, ptr=None, **kw):
+        info = {"message": f"比較 {st['cmp']} 回 ・ ずらし {st['shift']} 回", "color": "cyan"}
+        ptrs = [_sptr(ptr, "i")] if ptr is not None else []
+        return _f([_sm(T, P, start, ptrs=ptrs, **kw), tbl(key, key_color)],
+                  [{"message": msg, "color": color}, info])
+
+    # ── 1. ずらし表の作成 ──────────────────────────────────────────
+    yield F(0, "まずずらし表を作る: 表[c] = パターン末尾から、c が最後に現れる位置までの距離",
+            color="white")
+    yield from _hold(F(0, f"P にない文字はすべて m = {m} (表では「その他」)", key=OTHER))
+    for k in range(m):
+        c = P[k]
+        before = vals[c]
+        vals[c] = m - 1 - k
+        note = f"  ({before} を上書き: 後ろに現れた位置が優先)" if before is not None else ""
+        yield from _hold(F(0, f"P[{k}] = '{_ch(c)}' → 表['{_ch(c)}'] = m - 1 - {k} = {vals[c]}{note}",
+                           key=kidx(c), p_hl={k: _SC_CMP}))
+
+    # ── 2. 照合: 末尾から左へ ────────────────────────────────────────
+    i = m - 1
+    yield from _hold(F(0, f"照合開始: パターン末尾 P[{m - 1}] とテキスト T[{i}] から右→左へ比べる",
+                       color="white", ptr=i))
+    while i < n:
+        p = m - 1
+        start = i - p
+        while p >= 0:
+            ok_t = {start + k: _SC_EQ for k in range(p + 1, m)}
+            ok_p = {k: _SC_EQ for k in range(p + 1, m)}
+            st["cmp"] += 1
+            c, d = T[i], P[p]
+            yield F(start, f"T[{i}] = '{_ch(c)}' と P[{p}] = '{_ch(d)}' を比較  (i = {i}, p = {p})",
+                    ptr=i, t_hl={**ok_t, i: _SC_CMP}, p_hl={**ok_p, p: _SC_CMP},
+                    compare={"col": i, "state": "cmp"})
+            if c != d:
+                yield from _hold(F(start, f"'{_ch(c)}' ≠ '{_ch(d)}' 不一致", color="orange", ptr=i,
+                                   t_hl={**ok_t, i: _SC_NE}, p_hl={**ok_p, p: _SC_NE},
+                                   compare={"col": i, "state": "ne"}))
+                break
+            yield from _hold(F(start, f"'{_ch(c)}' = '{_ch(d)}' 一致 → 1 つ左へ (i--, p--)", ptr=i,
+                               t_hl={**ok_t, i: _SC_EQ}, p_hl={**ok_p, p: _SC_EQ},
+                               compare={"col": i, "state": "eq"}))
+            i -= 1
+            p -= 1
+        if p < 0:
+            s0 = i + 1
+            yield from _found_frames(
+                lambda t_hl, p_hl: F(s0, f"一致!  T[{s0}..{s0 + m - 1}] = P   (位置 {s0} で発見)", color="red",
+                                     t_hl=t_hl, p_hl=p_hl),
+                s0, m)
+            return
+        c = T[i]
+        s1 = vals.get(c, m)
+        s2 = m - p
+        adv = max(s1, s2)
+        key = kidx(c)
+        src = f"表['{_ch(c)}']" if c in vals else f"表['{_ch(c)}'] (P にない文字)"
+        ok_t = {start + k: _SC_EQ for k in range(p + 1, m)}
+        ok_p = {k: _SC_EQ for k in range(p + 1, m)}
+        yield from _hold(F(start, f"{src} = {s1},  m - p = {m} - {p} = {s2}  → i を max = {adv} 進める",
+                           color="orange", key=key, key_color=_SC_LOOK, ptr=i,
+                           t_hl={**ok_t, i: _SC_NE}, p_hl={**ok_p, p: _SC_NE}))
+        ni     = i + adv
+        nstart = ni - (m - 1)
+        st["shift"] += 1
+        arw = {"from": start, "to": nstart, "label": f"+{nstart - start}"}
+        yield from _hold(F(start, f"パターンを {nstart - start} 文字右へずらす (i = {i} → {ni})",
+                           color="orange", key=key, key_color=_SC_LOOK, ptr=i, ghost=nstart, arrow=arw))
+        if ni < n:
+            msg = f"i = {ni}: 新しい位置で、パターン末尾から比べる"
+        else:
+            msg = f"i = {ni} ≥ n = {n}: パターンがテキストの外に出たので終了"
+        yield from _hold(F(nstart, msg, color="orange", key=key, key_color=_SC_LOOK, ptr=ni,
+                           ghost=start, arrow=arw))
+        i = ni
+    last = F(i - (m - 1), "テキストの末尾まで調べたが、パターンは見つからない", color="red", ptr=i)
+    last["finished"] = True
+    last["found"] = False
+    yield last
 
 
 # ===========================================================================
@@ -1017,6 +1460,10 @@ AlgorithmList = [
     ("線形探索 (整列済み配列)",       linear_search_sorted,    {"type": "search", "sorted": True}),
     ("二分探索 (反復)",             binary_search,           {"type": "search", "sorted": True}),
     ("二分探索 (再帰)",             binary_search_recursive, {"type": "search", "sorted": True}),
+    # ── 文字列照合 ──
+    ("文字列照合: 力まかせ法",        string_match_brute_force, {"type": "string"}),
+    ("文字列照合: KMP 法",           string_match_kmp,         {"type": "string"}),
+    ("文字列照合: BMH 法",           string_match_bmh,         {"type": "string"}),
     # ── ソート ──
     ("マージソート (反復)",           merge_sort_iter,         {"type": "sort"}),
     ("マージソート (再帰)",           merge_sort_rec,          {"type": "sort"}),
