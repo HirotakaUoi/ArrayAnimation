@@ -15,7 +15,7 @@
   <p class="lead">探索・文字列照合・ソート・その他（階乗・フィボナッチ）のアルゴリズムを、配列のマス目や木で動かして見せるアプリです。</p>
   <p class="meta">2026-11-11 版　／　アルゴリズム 20 本</p>
   <div class="links">
-    <a href="/static/manual.pdf?v=1" target="_blank" rel="noopener">📄 PDF 版を開く</a>
+    <a href="/static/manual.pdf?v=2" target="_blank" rel="noopener">📄 PDF 版を開く</a>
     <a class="sub" href="/" target="_blank" rel="noopener">アニメーションの画面を開く</a>
   </div>
 </div>
@@ -88,7 +88,7 @@
 <table><thead><tr><th>設定</th><th>はたらき</th></tr></thead><tbody><tr><td>文字列</td><td>テキスト T とパターン P の作り方です。ランダム（ACGT の 4 種／A・B の 2 種／英数字 62 種）、例（最悪ケース <code>aaaaaaB</code>／KMP の定番 <code>ABCDABD</code>）、自由入力、から選びます。</td></tr><tr><td><span class="k sec">🎲</span></td><td>同じ種類で、文字列を作り直します。</td></tr><tr><td>T ・ P</td><td>テキストとパターンの入力欄です。T は 64 文字、P は 32 文字まで。日本語も使えます。手で書き換えると、種類は「自由入力」になります。空のとき、P が T より長いときなどは、赤字で理由が出て開始できません。</td></tr><tr><td>データ数</td><td>ランダムに作るテキストの長さです（64 まで）。</td></tr></tbody></table>
 <p>「全パネルへ適用」で 3 つのパネルに同じ文字列を配ると、比較の回数の違いを並べて見られます。</p>
 <h3>ソート</h3>
-<table><thead><tr><th>設定</th><th>はたらき</th></tr></thead><tbody><tr><td>データ数</td><td>並べ替えるデータの数です。マージソート（3テープ）とノームソート（1テープ）は、テープに並べるのは 32 個まで（それより多いときは先頭の 32 個）です。</td></tr><tr><td>データ条件</td><td>初期データの並びです。ランダム／昇順／降順／ほぼ昇順。</td></tr></tbody></table>
+<table><thead><tr><th>設定</th><th>はたらき</th></tr></thead><tbody><tr><td>データ数</td><td>並べ替えるデータの数です。マージソート（3テープ）とノームソート（1テープ）は、データが画面に収まらないとき（初期のパネル幅では 64 個以上）はテープが流れ、見えている範囲の外にあるデータの個数を両端に「◀ 21 個」「20 個 ▶」のように表示します。パネルを広げると一度に見える数が増えます。ノームソートはデータ数が多いと非常に時間がかかります。</td></tr><tr><td>データ条件</td><td>初期データの並びです。ランダム／昇順／降順／ほぼ昇順。</td></tr></tbody></table>
 <h3>その他（階乗・フィボナッチ）</h3>
 <p>データ数は計算する n です。大きすぎると見にくくなるため、上限があります（階乗（反復）20、階乗（再帰）15、フィボナッチ（反復）12、フィボナッチ（再帰）8、フィボナッチ（メモ化）12）。</p>
 
@@ -118,7 +118,7 @@
 <h2 id="trouble">困ったときは</h2><h3>アプリを新しくしたはずなのに、画面が前のまま</h3><p>ブラウザが古いファイルを使っています。<kbd>Shift</kbd> を押しながら再読み込み（Mac: <kbd>⌘</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>、Windows: <kbd>Ctrl</kbd>+<kbd>F5</kbd>）してください。</p><h3>インターネット上の版（Render）で、最初の表示がとても遅い</h3><p>しばらく誰も使っていないとサーバーが止まり、次に開いたときの起動に 1 分ほどかかります。少し待ってから読み込み直してください。</p><h3>速すぎて見えない／遅すぎる</h3><p>パネルの速度スライダーで変えられます（実行中でも変えられます）。授業の説明には ×0.5〜×1 くらい、1 手ずつ説明するときはステップ実行が便利です。</p><h3><span class="k primary">▶ 開始</span> が押せない</h3><p>実行中・終わったあとは押せません。<span class="k sec">↺ リセット</span> を押してから開始してください。入力欄の値が正しくないときも開始できません（赤字で理由が出ます）。</p><h3>パネルが画面の外に出てしまった</h3><p>ヘッダーの <span class="k sec">－</span> で縮小すると見つけやすくなります。見つけたら ⠿ をドラッグして戻し、<span class="k sec">↺</span> で 100% に戻してください。</p><h3>Space / Enter を押してもステップ実行が進まない</h3><p>入力欄にカーソルがあると効きません。パネルの何もないところをクリックしてから押してください。速度が左端（「ステップ」）になっているかも確かめてください。</p>
 
 <div class="footer">
-  ArrayAnimation – 配列アルゴリズム可視化 使い方マニュアル（2026-11-11 版）。<span class="no-print">印刷用の <a href="/static/manual.pdf?v=1" target="_blank" rel="noopener">PDF 版</a>もあります。</span><br>
+  ArrayAnimation – 配列アルゴリズム可視化 使い方マニュアル（2026-11-11 版）。<span class="no-print">印刷用の <a href="/static/manual.pdf?v=2" target="_blank" rel="noopener">PDF 版</a>もあります。</span><br>
   © 2026 Hirotaka Uoi. All rights reserved.
 </div>
 

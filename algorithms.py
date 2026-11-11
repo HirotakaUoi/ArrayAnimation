@@ -37,8 +37,15 @@ def _a(id, values, label="", hl=None, fills=None, ptr=None,
     }
 
 def _c(id, values, label="", hl=None, fills=None, ptr=None,
-       watchman=None, target=None, weight=1):
-    return {
+       watchman=None, target=None, weight=1, tape_cells=None, rest=None):
+    """1 次元配列のセル表示
+
+    tape_cells – テープ（_tape）と同じ大きさ・縦の位置のセルで描く（テープの表示と行き来しても
+                 セルの大きさが変わらない）。"arc" = 1 本のテープ（reserve_arc）/
+                 "plain" = 複数のテープの 1 本（テープと同じ高さの段に置き、大きさは values の数で決まる）
+    rest       – ここに描いていない残りのデータの個数（テープに載せない分）。右上に「… 残り n 個（対象外）」と出す
+    """
+    obj = {
         "id": id, "type": "array1d_cells",
         "values": list(values), "label": label,
         "highlights": {str(k): v for k, v in (hl or {}).items()},
@@ -46,6 +53,15 @@ def _c(id, values, label="", hl=None, fills=None, ptr=None,
         "watchman_index": watchman, "target": target,
         "weight": weight,
     }
+    if tape_cells:
+        obj["tape_cells"] = tape_cells
+    if rest:
+        obj["rest"] = int(rest)
+    return obj
+
+def _blank(weight=1):
+    """何も描かない段（ほかのコマと段の数・高さをそろえる）"""
+    return {"id": "blank", "type": "blank", "weight": weight}
 
 def _heap_tree(id, values, heap_size, hl=None, label="", weight=2.5, confirmed_min=0):
     return {
@@ -70,7 +86,7 @@ def _bucket_rows(id, buckets, bucket_colors, label="",
 
 def _tape(id, cells, head, label="", color="#4472C4", weight=1,
           hl=None, sorted_upto=None, swap=None, reserve_arc=False,
-          head_label=None):
+          head_label=None, size_n=None, rest=None):
     """無端テープ
 
     hl          – {インデックス: "色"} で個別セルをハイライト
@@ -78,8 +94,12 @@ def _tape(id, cells, head, label="", color="#4472C4", weight=1,
     swap        – {"a": idx, "b": idx, "phase": "before"|"after"} 交換アーク注釈
     reserve_arc – True でセル上に注釈用スペース・セル下に添字ラベルを確保
     head_label  – ヘッド矢印の下に表示する名前 (例 "pos")
+    size_n      – セルの大きさを決めるセルの数 (省略時は cells の数)。複数のテープは
+                  全部のデータ数を渡して大きさをそろえる (中身の数で決めると、テープごと・
+                  コマごとに大きさが変わる)
+    rest        – テープに載せていない残りのデータの個数。右上に「… 残り n 個（対象外）」と出す
     """
-    return {
+    obj = {
         "id": id, "type": "tape",
         "cells": list(cells), "head": int(head),
         "label": label, "color": color, "weight": weight,
@@ -87,6 +107,11 @@ def _tape(id, cells, head, label="", color="#4472C4", weight=1,
         "sorted_upto": sorted_upto, "swap": swap,
         "reserve_arc": bool(reserve_arc), "head_label": head_label,
     }
+    if size_n is not None:
+        obj["size_n"] = int(size_n)
+    if rest:
+        obj["rest"] = int(rest)
+    return obj
 
 def _staircase(id, rows, label=""):
     return {
@@ -844,12 +869,20 @@ def merge_sort_rec(n, data_condition=0, data=None):
 # マージソート (テープ) – 初期配列 → 3テープ
 # ---------------------------------------------------------------------------
 
+MERGE_TAPE_MAX = 512  # テープに載せる最大の個数 (= 選べるデータ数の最大。全部のデータを整列する)。
+                      # 画面に収まらない分はテープが流れ、画面の外にある個数を端に出す (array_canvas.js)。
+                      # AlgorithmList の meta "tape_preview" で画面にも渡す
+
 def merge_sort_tape(n, data_condition=0, data=None):
     data = _make_sort_data(n, data_condition, data)
-    N    = min(len(data), 32)
+    N    = min(len(data), MERGE_TAPE_MAX)
+    title = f"マージソート (3テープ)  N = {N}"
+    if len(data) > N:
+        title += f"   ※ {len(data)} 個中 先頭 {N} 個"
+    rest = len(data) - N      # テープに載せない残りの個数 (初期データとテープ A の右上に出す)
     data = data[:N]
 
-    base = [{"message": f"マージソート (3テープ)  N = {N}", "color": "white"}]
+    base = [{"message": title, "color": "white"}]
 
     tape_a = list(data)
     tape_b = []
@@ -860,13 +893,15 @@ def merge_sort_tape(n, data_condition=0, data=None):
         if msg:
             texts = texts + [{"message": msg, "color": color}]
         return _f([
-            _tape("tapeA", tape_a, ha, "テープ A", "#4472C4"),
-            _tape("tapeB", tape_b, hb, "テープ B", "#44aa44"),
-            _tape("tapeC", tape_c, hc, "テープ C", "#cc6600"),
+            _tape("tapeA", tape_a, ha, "テープ A", "#4472C4", size_n=N, rest=rest),
+            _tape("tapeB", tape_b, hb, "テープ B", "#44aa44", size_n=N),
+            _tape("tapeC", tape_c, hc, "テープ C", "#cc6600", size_n=N),
         ], texts, finished=finished)
 
-    # 初期状態を array1d_cells で表示してから テープ表示へ
-    yield _f([_c("init", data, "初期データ")],
+    # 初期状態を array1d_cells で表示してから テープ表示へ。
+    # 初期データはテープ A と同じ一番上の段に、テープと同じ大きさのセルで描く (tape_cells="plain"。
+    # 下の 2 段は空ける)。開始前の表示 (app.js の _drawPreviewOnCanvas) も同じ枠 (説明 2 行) にしている
+    yield _f([_c("init", data, "初期データ", tape_cells="plain", rest=rest), _blank(), _blank()],
              base + [{"message": "テープAへ転送します", "color": "cyan"}])
     yield frame(0, 0, 0, "テープAに全データ。テープB・Cは空白。")
 
@@ -922,6 +957,10 @@ def merge_sort_tape(n, data_condition=0, data=None):
 # ノームソート (1テープ) – ヘッドが ±1 しか動けない 1 本のテープで整列
 # ---------------------------------------------------------------------------
 
+GNOME_TAPE_MAX = 512  # テープに載せる最大の個数 (= 選べるデータ数の最大。全部のデータを整列する)。
+                      # O(N^2) なのでデータ数が多いとコマ数がとても多くなる (64 個で数千コマ)。
+                      # AlgorithmList の meta "tape_preview" で画面にも渡す
+
 def gnome_sort_tape(n, data_condition=0, data=None):
     """ノームソート (1テープ)
 
@@ -930,9 +969,10 @@ def gnome_sort_tape(n, data_condition=0, data=None):
     ヘッドの移動が常に ±1 コマなので、巻き戻しのできない
     3 テープ方式と違い **1 本のテープだけ** で実行できる。
     """
-    MAX_N = 32                                   # テープ表示・O(N^2) の都合で上限
+    MAX_N = GNOME_TAPE_MAX
     data  = _make_sort_data(n, data_condition, data)
     N     = min(len(data), MAX_N)
+    rest  = len(data) - N     # テープに載せない残りの個数 (配列・テープの右上に出す)
     tape  = data[:N]
 
     CMP_C  = "yellow"        # 比較中
@@ -956,11 +996,13 @@ def gnome_sort_tape(n, data_condition=0, data=None):
         ]
         return _f([_tape("tape", tape, head, "テープ", "#4472C4",
                          hl=hl, sorted_upto=sorted_upto, swap=swap,
-                         reserve_arc=True, head_label="pos")],
+                         reserve_arc=True, head_label="pos", rest=rest)],
                   texts, finished=finished)
 
     # ── 初期データ → テープへ ──
-    yield _f([_c("init", tape, "初期データ")],
+    # 初期データ・ソート結果の配列はテープと同じ大きさのセルで描く (tape_cells)。
+    # 開始前の表示 (app.js の _drawPreviewOnCanvas) も同じ枠 (説明 3 行) にしている
+    yield _f([_c("init", tape, "初期データ", tape_cells="arc", rest=rest)],
              [{"message": title, "color": "white"},
               {"message": "1 本のテープに書き込みます", "color": "cyan"},
               {"message": "ヘッドは 1 コマずつ左右にしか動けません",
@@ -1012,7 +1054,7 @@ def gnome_sort_tape(n, data_condition=0, data=None):
     yield frame(N, N, "ヘッドがテープの右端を越えました  →  整列完了", "#FFD700",
                 hl={i: OK_C for i in range(N)})
     yield _f([_c("done", tape, "ソート結果",
-                 hl={i: OK_C for i in range(N)})],
+                 hl={i: OK_C for i in range(N)}, tape_cells="arc", rest=rest)],
              [{"message": title, "color": "white"},
               {"message": f"比較 {cnt['cmp']} 回 / 交換 {cnt['swp']} 回",
                "color": "cyan"},
@@ -1469,11 +1511,14 @@ AlgorithmList = [
     # ── ソート ──
     ("マージソート (反復)",           merge_sort_iter,         {"type": "sort"}),
     ("マージソート (再帰)",           merge_sort_rec,          {"type": "sort"}),
-    ("マージソート (3テープ)",        merge_sort_tape,         {"type": "sort"}),
+    ("マージソート (3テープ)",        merge_sort_tape,
+     {"type": "sort", "tape_preview": {"max": MERGE_TAPE_MAX, "cells": "plain", "rows": 3, "lines": []}}),
     ("ヒープソート",                 heap_sort,               {"type": "sort"}),
     ("バケツソート",                 bucket_sort,             {"type": "sort"}),
     ("基数ソート (LSD)",            radix_sort,              {"type": "sort"}),
-    ("ノームソート (1テープ)",        gnome_sort_tape,         {"type": "sort"}),
+    ("ノームソート (1テープ)",        gnome_sort_tape,
+     {"type": "sort", "tape_preview": {"max": GNOME_TAPE_MAX, "cells": "arc", "rows": 1,
+                                       "lines": ["1 本のテープに書き込み、ヘッドを 1 コマずつ動かして整列します"]}}),
     # ── その他 ──
     ("階乗 (反復)",                 factorial_iter,          {"type": "misc"}),
     ("階乗 (再帰)",                 factorial_rec,           {"type": "misc"}),

@@ -68,6 +68,38 @@ let _acThemeKey = "bright";   // 初期テーマは明るめ（index.html の <b
 function _acTheme() { return AC_THEMES[_acThemeKey] ?? AC_THEMES.dark; }
 function setCanvasTheme(k) { _acThemeKey = k; }
 
+// テープ（_drawTape）の余白。ARC_H・BOT_H は 1 本のテープ（reserve_arc）のときの値
+const TAPE_PAD = 6, TAPE_LBL_W = 64, TAPE_ARC_H = 24, TAPE_BOT_H = 34;
+// テープのセルの一辺の最小値。テープに載る最大の個数（32 個）が、初期のパネル幅（表示エリア 494px）で
+// 全部収まる大きさまで小さくできるようにしてある（418px ÷ 35 コマ ≒ 12px）
+const TAPE_MIN_CELL = 12;
+// テープのセルの文字の大きさ（セルの幅に収まるように、桁の多い値は小さくする。最小 6px）
+// テープに載せていない残りのデータの印（obj.rest = 残りの個数）。段の右上に、注釈の色（橙）で
+// 「… 残り n 個（対象外）▶」と出す。データ数がテープに載る個数より多いとき、データがまだあることを示す
+function _drawTapeRest(ctx, cw, areaY, rest) {
+  if (!rest) return;
+  ctx.save();
+  ctx.fillStyle = "#e06000"; ctx.font = "bold 11px sans-serif";
+  ctx.textAlign = "right"; ctx.textBaseline = "alphabetic";
+  ctx.fillText(`… 残り ${rest} 個（対象外）▶`, cw - 8, areaY + 12);
+  ctx.restore();
+}
+// テープが画面に収まらないときの印: 見えている範囲の左・右の外にあるデータの個数を、段の上の両端に
+// 注釈の色（橙）で「◀ 12 個」「20 個 ▶」と出す（データがまだ続いていることを示す）
+function _drawTapeMore(ctx, xL, xR, y, nL, nR) {
+  ctx.save();
+  ctx.fillStyle = "#e06000"; ctx.font = "bold 10px sans-serif"; ctx.textBaseline = "alphabetic";
+  if (nL > 0) { ctx.textAlign = "left";  ctx.fillText(`◀ ${nL} 個`, xL, y); }
+  if (nR > 0) { ctx.textAlign = "right"; ctx.fillText(`${nR} 個 ▶`, xR, y); }
+  ctx.restore();
+}
+// 全部のデータが収まらないときのテープのセルの一辺（収まらないなら小さくしても意味が無いので、読みやすい大きさにする）
+const TAPE_SCROLL_CELL = 18;
+function _tapeFontSize(cellW, cellH, text) {
+  const base = Math.max(8, Math.min(13, cellW * 0.42, cellH * 0.46));
+  return Math.max(6, Math.min(base, (cellW - 2) / (String(text).length * 0.6)));
+}
+
 class ArrayCanvas {
   /** @param {HTMLCanvasElement} canvas */
   constructor(canvas) {
@@ -114,6 +146,7 @@ class ArrayCanvas {
           case "staircase":     this._drawStaircase(obj, areaY, eachH);    break;
           case "string_match":  this._drawStringMatch(obj, areaY, eachH);  break;
           case "kv_table":      this._drawKvTable(obj, areaY, eachH);      break;
+          case "blank":         break;   // 何も描かない段（ほかのコマと段の高さをそろえる）
         }
         areaY += eachH;
       }
@@ -279,7 +312,7 @@ class ArrayCanvas {
       values = [], label = "",
       highlights = {}, fills = [],
       pointer = null, watchman_index = null,
-      target = null,
+      target = null, tape_cells = false,
     } = obj;
     const n = values.length;
     if (n === 0) return;
@@ -302,11 +335,27 @@ class ArrayCanvas {
     const chartH = chartB - chartT;
 
     // セルサイズ: 横幅を n 等分し正方形に近づける
-    const cellW  = Math.max(18, Math.min(56, (chartR - chartL) / n));
-    const cellH  = Math.min(cellW, Math.max(18, chartH * 0.65));
+    // tape_cells: テープ（_drawTape）と同じ大きさ・縦の位置で描く。
+    //   "arc" = 1 本のテープ（reserve_arc）/ "plain" = 複数のテープの 1 本（同じ高さの段に置く）
+    // nDraw: 描くセルの数。tape_cells で全部が収まらないときは、テープのヘッドが先頭にあるときと同じ並び
+    //   （左に空き 1 コマ分をあけて先頭から nVis - 1 個）だけを描き、右の外にある個数を出す
+    let cellW, cellH, cellY, tapeX0 = null, nDraw = n;
+    if (tape_cells) {
+      let nVis;
+      ({ cell: cellW, y: cellY, x0: tapeX0, nVis } = this._tapeCell(n, areaY, areaH, tape_cells === "arc"));
+      cellH = cellW;
+      if (tapeX0 === null) {
+        tapeX0 = TAPE_PAD + TAPE_LBL_W + cellW;
+        nDraw  = Math.min(n, nVis - 1);
+      }
+    } else {
+      cellW = Math.max(18, Math.min(56, (chartR - chartL) / n));
+      cellH = Math.min(cellW, Math.max(18, chartH * 0.65));
+      cellY = chartT + (chartH - cellH) / 2;
+    }
     const totalW = cellW * n;
-    const startX = chartL + Math.max(0, ((chartR - chartL) - totalW) / 2);
-    const cellY  = chartT + (chartH - cellH) / 2;
+    // tape_cells で全部のセルが収まるときは、テープのデータの位置（_tapeCell の x0）にそろえる
+    const startX = tapeX0 ?? chartL + Math.max(0, ((chartR - chartL) - totalW) / 2);
 
     ctx.save();
 
@@ -315,6 +364,8 @@ class ArrayCanvas {
       ctx.textAlign = "left";
       ctx.fillText(label, PAD_L, areaY + 12);
     }
+    _drawTapeRest(ctx, cw, areaY, obj.rest);
+    if (nDraw < n) _drawTapeMore(ctx, TAPE_PAD + TAPE_LBL_W, cw - 8, cellY - 5, 0, n - nDraw);
 
     // target セル
     if (HAS_TARGET) {
@@ -339,7 +390,7 @@ class ArrayCanvas {
     }
 
     // セル描画
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < nDraw; i++) {
       const cx          = startX + i * cellW;
       const isWatchman  = (watchman_index === i);
       const hlColor     = highlights[String(i)];
@@ -365,8 +416,9 @@ class ArrayCanvas {
       ctx.lineWidth   = isWatchman ? 2 : hlColor ? 1.5 : 1;
       ctx.strokeRect(cx + 0.5, cellY + 0.5, cellW - 2, cellH - 1);
 
-      // 値ラベル
-      const fs = Math.max(8, Math.min(14, cellW * 0.48, cellH * 0.48));
+      // 値ラベル（tape_cells のときはテープと同じ文字の大きさ）
+      const fs = tape_cells ? _tapeFontSize(cellW, cellH, values[i])
+                            : Math.max(8, Math.min(14, cellW * 0.48, cellH * 0.48));
       ctx.fillStyle    = _acTheme().cellText;
       ctx.font         = `${fs}px monospace`;
       ctx.textAlign    = "center";
@@ -375,11 +427,11 @@ class ArrayCanvas {
       ctx.textBaseline = "alphabetic";
 
       // インデックスラベル (下)
-      if (cellW >= 14) {
+      if (cellW >= (tape_cells ? TAPE_MIN_CELL : 14)) {
         const iFs = Math.max(7, Math.min(9, cellW * 0.38));
         ctx.fillStyle = _acTheme().indexLabelColor; ctx.font = `${iFs}px sans-serif`;
         ctx.textAlign = "center";
-        ctx.fillText(String(i), cx + cellW / 2, cellY + cellH + 12);
+        ctx.fillText(String(i), cx + cellW / 2, cellY + cellH + (tape_cells ? 11 : 12));
       }
     }
 
@@ -735,25 +787,22 @@ class ArrayCanvas {
     const ctx = this.ctx;
     const cw  = this.cw;
 
-    const PAD    = 6;
-    const LBL_W  = 64;
-    // reserve_arc: セル上に注釈 (交換アーク)、セル下に添字ラベルの余白を確保
-    const ARC_H  = reserve_arc ? 24 : 0;
-    const BOT_H  = reserve_arc ? 34 : 14;               // 添字 + ヘッド矢印 + 名前
-    // セルサイズを array1d_cells と揃える (小さめに抑える)
-    // reserve_arc の単体テープは、全セル + 前後の余白が収まる範囲で大きく描く
-    const availW0 = cw - PAD * 2 - LBL_W;
-    const cellH  = reserve_arc
-      ? Math.max(18, Math.min(48,
-          areaH - PAD * 2 - ARC_H - BOT_H,
-          availW0 / Math.max(6, cells.length + 3)))
-      : Math.max(18, Math.min(28, areaH - PAD * 2 - 16));
+    const PAD    = TAPE_PAD;
+    const LBL_W  = TAPE_LBL_W;
+    // reserve_arc: セル上に注釈 (交換アーク)、セル下に添字ラベルの余白を確保（余白は _tapeCell で取る）
+    const ARC_H  = reserve_arc ? TAPE_ARC_H : 0;
+    // セルの大きさと縦の位置（_tapeCell）。size_n: 大きさを決めるセルの数（複数のテープは全部のデータ数を
+    // 渡してそろえる。テープの中身の数で決めると、テープごと・コマごとに大きさが変わる）
+    const sizeN = obj.size_n ?? cells.length;
+    const { cell: cellH, y: tapeY, nVis, lead } = this._tapeCell(sizeN, areaY, areaH, reserve_arc);
     const cellW  = cellH;
-    const tapeY  = areaY + ARC_H + (areaH - ARC_H - cellH - BOT_H) / 2;
-    const availW = cw - PAD * 2 - LBL_W;
-    const nVis   = Math.max(3, Math.floor(availW / cellW));
-    const half   = Math.floor(nVis / 2);
-    const startX = PAD + LBL_W + half * cellW;
+    // 全部のデータが収まるとき（lead が数値）: テープは動かさず、データの先頭を左から lead コマ目に置いて
+    //   ヘッド（▲）の方を動かす。見えているデータのセルの数がデータ数と同じになる
+    // 収まらないとき（lead が null）: ヘッドを中央に置いて、テープの方を動かす（見えるのはヘッドの前後だけ）
+    //   ただし、先頭より左・末尾より右の空きコマは 1 コマまでしか見せない（端ではヘッドの方が動く）
+    const firstIdx = (lead !== null) ? -lead                                  // 左端のコマに来る添字
+      : Math.max(-1, Math.min(sizeN - nVis + 1, head - Math.floor(nVis / 2)));
+    const colX = (idx) => PAD + LBL_W + (idx - firstIdx) * cellW;             // 添字 idx のセルの左端
 
     ctx.save();
 
@@ -772,7 +821,7 @@ class ArrayCanvas {
 
     // セル
     for (let vi = 0; vi < nVis; vi++) {
-      const idx    = head - half + vi;
+      const idx    = firstIdx + vi;
       const cx     = PAD + LBL_W + vi * cellW;
       const inData = idx >= 0 && idx < cells.length;
       const isHead = (idx === head);
@@ -822,7 +871,7 @@ class ArrayCanvas {
         ctx.lineWidth   = isHead ? 2.5 : hlColor ? 2 : 1;
         ctx.strokeRect(cx + 0.5, tapeY + 0.5, cellW - 2, cellH - 1);
 
-        const fs = Math.max(8, Math.min(13, cellW * 0.42, cellH * 0.46));
+        const fs = _tapeFontSize(cellW, cellH, cells[idx]);
         ctx.fillStyle    = _acTheme().cellText;
         ctx.font         = `${fs}px monospace`;
         ctx.textAlign    = "center";
@@ -831,7 +880,7 @@ class ArrayCanvas {
         ctx.textBaseline = "alphabetic";
 
         // 添字ラベル (下)
-        if (reserve_arc && cellW >= 14) {
+        if (reserve_arc && cellW >= TAPE_MIN_CELL) {
           const iFs = Math.max(7, Math.min(9, cellW * 0.38));
           ctx.fillStyle = _acTheme().indexLabelColor;
           ctx.font      = `${iFs}px sans-serif`;
@@ -845,8 +894,8 @@ class ArrayCanvas {
     if (swap && ARC_H > 0) {
       const phase = swap.phase || "before";
       const aCol  = (phase === "after") ? "#66ddff" : "#ff6600";
-      const xa = PAD + LBL_W + (swap.a - head + half) * cellW + cellW / 2;
-      const xb = PAD + LBL_W + (swap.b - head + half) * cellW + cellW / 2;
+      const xa = colX(swap.a) + cellW / 2;
+      const xb = colX(swap.b) + cellW / 2;
       const topY  = tapeY - 5;
       const ctrlY = tapeY - ARC_H - 6;
 
@@ -873,8 +922,17 @@ class ArrayCanvas {
       ctx.restore();
     }
 
+    // テープに載せていない残りのデータの印（セル・交換アークより上のレイヤ）
+    _drawTapeRest(ctx, cw, areaY, obj.rest);
+    // 収まらないとき: 見えている範囲の左・右の外にあるデータの個数
+    if (lead === null) {
+      const nL = Math.max(0, Math.min(cells.length, firstIdx));
+      const nR = Math.max(0, cells.length - (firstIdx + nVis));
+      _drawTapeMore(ctx, PAD + LBL_W, cw - 8, reserve_arc ? areaY + 12 : tapeY - 5, nL, nR);
+    }
+
     // ヘッド矢印
-    const hx = PAD + LBL_W + half * cellW + cellW / 2;
+    const hx = colX(head) + cellW / 2;
     ctx.fillStyle = color;
     ctx.textAlign = "center";
     if (reserve_arc) {
@@ -890,6 +948,35 @@ class ArrayCanvas {
     }
 
     ctx.restore();
+  }
+
+  // テープのセルの大きさ（正方形の一辺）と縦の位置。n 個のセル + 前後の余白（3 コマ分）が横に収まる範囲で、
+  // 1 本のテープ（reserveArc。上に交換アーク・下に添字とヘッド名の余白）は最大 48px、
+  // 複数のテープ（マージソート (3テープ)）は最大 28px で、どちらも最小 TAPE_MIN_CELL。
+  // 初期データなどの array1d_cells も tape_cells を付けるとこの大きさ・位置で描くので、
+  // 実行してテープの表示に切り替わってもセルの大きさが変わらない
+  //
+  // 横の並び: nVis = 横に並ぶコマの数。n 個 + 前後 1 コマずつが収まるときは、データを中央に置いて
+  // テープを動かさない（lead = データの先頭より左の空きコマの数、x0 = データの先頭のセルの左端）。
+  // 収まらないとき（パネルが狭く、セルが最小の大きさでも入らない）は lead・x0 とも null
+  _tapeCell(n, areaY, areaH, reserveArc) {
+    const availW = this.cw - TAPE_PAD * 2 - TAPE_LBL_W;
+    const fitW = availW / Math.max(6, n + 3);
+    // 全部は収まらないとき（最小の大きさでも入らない）は、収めるのをやめて読みやすい大きさにする
+    // （最小の大きさで n 個 + 前後 1 コマずつが並べば「収まる」。下の lead の条件と同じ）
+    const wLim = (Math.floor(availW / TAPE_MIN_CELL) >= n + 2) ? fitW : TAPE_SCROLL_CELL;
+    let cell, y;
+    if (reserveArc) {
+      cell = Math.max(TAPE_MIN_CELL, Math.min(48, areaH - TAPE_PAD * 2 - TAPE_ARC_H - TAPE_BOT_H, wLim));
+      y = areaY + TAPE_ARC_H + (areaH - TAPE_ARC_H - cell - TAPE_BOT_H) / 2;
+    } else {
+      cell = Math.max(TAPE_MIN_CELL, Math.min(28, areaH - TAPE_PAD * 2 - 16, wLim));
+      y = areaY + (areaH - cell - 14) / 2;
+    }
+    const nVis = Math.max(3, Math.floor(availW / cell));
+    const lead = (nVis >= n + 2) ? Math.floor((nVis - n) / 2) : null;
+    const x0   = (lead !== null) ? TAPE_PAD + TAPE_LBL_W + lead * cell : null;
+    return { cell, y, nVis, lead, x0 };
   }
 
   _drawTapeHashmark(ctx, x, tapeY, w, cellH) {
@@ -1430,8 +1517,14 @@ class ArrayCanvas {
    * @param {boolean}  showTarget
    * @param {string}   mode  "bars" | "cells"
    */
+  // テープで整列するアルゴリズム（ノームソート (1テープ)・マージソート (3テープ)）は、実行中の「初期データ」の
+  // コマと同じ枠で描くための opts を渡す:
+  //   opts.tapeMax:   テープに載る先頭 tapeMax 個だけを描く（返す values は全部。サーバーが先頭 tapeMax 個を使う）
+  //   opts.tapeCells: テープと同じ大きさのセルで描く（"arc" / "plain"。_drawArray1dCells の tape_cells）
+  //   opts.extra:     配列の下に並べる段（{type: "blank"} など。実行中のコマと段の数・高さをそろえる）
+  //   opts.texts:     説明の行（実行中のコマと同じ行数にすると、セルの縦の位置もそろう）／ opts.label: 配列の見出し
   drawPreview(numItems, sorted = false, forcedTarget = null,
-              sharedValues = null, showTarget = true, mode = "bars") {
+              sharedValues = null, showTarget = true, mode = "bars", opts = {}) {
     const maxVal = numItems >= 200 ? 999 : 99;
     let values = sharedValues
       ? [...sharedValues]
@@ -1443,21 +1536,24 @@ class ArrayCanvas {
       : null;
 
     const type = (mode === "cells") ? "array1d_cells" : "array1d";
+    const tapeMax = opts.tapeMax || 0;
     this.draw({
       objects: [{
         id:             "preview",
         type,
-        values,
-        label:          "Data",
+        values:         tapeMax ? values.slice(0, tapeMax) : values,
+        label:          opts.label ?? "Data",
         highlights:     {},
         fills:          [],
         pointer:        null,
         watchman_index: null,
         target,
         log_scale:      false,
+        tape_cells:     opts.tapeCells || false,
+        rest:           (tapeMax && values.length > tapeMax) ? values.length - tapeMax : 0,
         weight:         1,
-      }],
-      texts:    [],
+      }, ...(opts.extra || [])],
+      texts:    opts.texts || [],
       finished: false,
     });
     return { values, target };

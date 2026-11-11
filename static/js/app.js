@@ -933,8 +933,31 @@ class ArrayPanel {
     const showTarget = (type === "search");
     const tRaw       = this.el.querySelector(".inp-target").value.trim();
     const forced     = (showTarget && tRaw !== "") ? Number(tRaw) : null;
+    // テープで整列するアルゴリズム（ノームソート (1テープ)・マージソート (3テープ)。meta.tape_preview）:
+    // 実行中の「初期データ」のコマ（algorithms.py の gnome_sort_tape / merge_sort_tape）と同じ枠で描く
+    //   max:   テープに載る最大の個数（先頭 max 個だけを描く）
+    //   cells: セルの大きさ（"arc" = 1 本のテープ / "plain" = 複数のテープ）
+    //   rows:  段の数（初期データは一番上の段。残りは空ける）
+    //   lines: 題名の行の後に続ける説明の行（説明の行数を初期データのコマとそろえる）
+    //   → 開始してテープの表示に切り替わっても、セルの大きさと縦の位置が変わらない
+    // (1 行目は「開始ボタンを押してください」の表示と重なるので空けておく)
+    const tp = algo?.meta?.tape_preview;
+    let opts = {};
+    if (tp) {
+      const N = Math.min(numItems, tp.max);
+      opts = {
+        tapeMax: tp.max, tapeCells: tp.cells, label: "初期データ",
+        extra: Array.from({ length: (tp.rows || 1) - 1 }, () => ({ type: "blank", weight: 1 })),
+        texts: [
+          { message: "", color: "white" },
+          { message: `${algo.name}  N = ${N}` + (numItems > N ? `   ※ ${numItems} 個中 先頭 ${N} 個` : ""),
+            color: "white" },
+          ...(tp.lines || []).map(m => ({ message: m, color: "cyan" })),
+        ],
+      };
+    }
     this._previewCache = new ArrayCanvas(canvas).drawPreview(
-      numItems, sorted, forced, null, showTarget, "cells"
+      numItems, sorted, forced, null, showTarget, "cells", opts
     );
   }
 
