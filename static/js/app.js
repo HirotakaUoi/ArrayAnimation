@@ -893,7 +893,7 @@ class ArrayPanel {
     // misc 型 (階乗・フィボナッチ等) は配列を使わないため空白キャンバスを表示
     if (type === "misc") {
       const ctx = canvas.getContext("2d");
-      ctx.fillStyle = "#1a1a2e";
+      ctx.fillStyle = _acTheme().canvasBg;   // 今のテーマの背景色（固定の暗い色だと明るいテーマで黒く見えた）
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       return;
     }
