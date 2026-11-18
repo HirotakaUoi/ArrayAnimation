@@ -442,7 +442,14 @@ class ArrayCanvas {
       // 値ラベル（tape_cells のときはテープと同じ文字の大きさ）
       const fs = tape_cells ? _tapeFontSize(cellW, cellH, values[i])
                             : Math.max(8, Math.min(14, cellW * 0.48, cellH * 0.48));
-      ctx.fillStyle    = _acTheme().cellText;
+      // 濃度 ON 時: 青背景の濃さに応じて文字色を切り替え（コントラスト確保）
+      let _cellTextColor = _acTheme().cellText;
+      if (_valRange && Number.isFinite(Number(values[i])) && !isWatchman) {
+        const _t = (Number(values[i]) - _valRange.lo) / (_valRange.hi - _valRange.lo);
+        const _isBright = (_acThemeKey === 'bright' || _acThemeKey === 'hcbright');
+        _cellTextColor = (_isBright && _t <= 0.45) ? "#1a2a3a" : "#ffffff";
+      }
+      ctx.fillStyle    = _cellTextColor;
       ctx.font         = `${fs}px monospace`;
       ctx.textAlign    = "center";
       ctx.textBaseline = "middle";
