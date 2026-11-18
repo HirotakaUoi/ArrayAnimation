@@ -334,7 +334,7 @@ function applyGlobalToAll() {
       } else if (type === "sort") {
         el.querySelector(".sel-condition").value = condition;
         panel._previewCache = null;   // 一括適用時は新しいデータを生成する
-        panel._drawPreview();
+        panel._drawPreview(true);
       } else if (type === "string") {
         if (!sharedStr) sharedStr = panel._stringForShare();
         panel._setString(sharedStr.kind, sharedStr.text, sharedStr.pattern);
@@ -541,7 +541,7 @@ class ArrayPanel {
       document.querySelectorAll(".panel").forEach(p =>
         { mz = Math.max(mz, parseInt(p.style.zIndex) || 1); });
       el.style.zIndex = mz + 1; }
-    requestAnimationFrame(() => this._drawPreview());
+    requestAnimationFrame(() => this._drawPreview(true));
     return el;
   }
 
@@ -730,7 +730,7 @@ class ArrayPanel {
     q(".sel-algo").addEventListener("change", () => {
       if (!this.isRunning) {
         this._previewCache = null;   // アルゴリズム変更時は新しいデータを生成する
-        this._updateParamVisibility(); this._drawPreview();
+        this._updateParamVisibility(); this._drawPreview(true);
       }
     });
     q(".sel-size")     .addEventListener("change", () => {
@@ -740,7 +740,7 @@ class ArrayPanel {
       if (_algoType(q(".sel-algo").value) === "string" && _isRandomKind(this._strKind)) {
         this._regenString();
       }
-      this._drawPreview();
+      this._drawPreview(true);
     });
     q(".sel-strkind")  .addEventListener("change", () => {
       this._regenString();
@@ -761,8 +761,8 @@ class ArrayPanel {
     };
     q(".inp-text")   .addEventListener("input", onStrInput);
     q(".inp-pattern").addEventListener("input", onStrInput);
-    q(".inp-target")   .addEventListener("change", () => { if (!this.isRunning) this._drawPreview(); });
-    q(".sel-condition").addEventListener("change", () => { if (!this.isRunning) this._drawPreview(); });
+    q(".inp-target")   .addEventListener("change", () => { if (!this.isRunning) this._drawPreview(true); });
+    q(".sel-condition").addEventListener("change", () => { if (!this.isRunning) this._drawPreview(true); });
 
     this.el.addEventListener("mousedown", () => this._bringToFront());
 
@@ -879,7 +879,10 @@ class ArrayPanel {
   }
 
   // ── プレビュー描画 ──────────────────────────────────────────
-  _drawPreview() {
+  // refresh=true のとき、取得済みの最初のフレームを捨ててサーバーから取り直す
+  // （アルゴリズム・データ数・target・初期状態の変更時やリセット時）。
+  // false（テーマ切替・濃度切替・リサイズ）のときは取得済みフレームを描き直す。
+  _drawPreview(refresh = false) {
     const wrapper = this.el.querySelector(".canvas-wrapper");
     const canvas  = this.el.querySelector(".array-canvas");
     const w = wrapper.clientWidth;
@@ -888,6 +891,7 @@ class ArrayPanel {
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w; canvas.height = h;
     }
+    if (refresh) this._previewFrame = null;
     this._drawPreviewOnCanvas(canvas);
   }
 
@@ -901,14 +905,9 @@ class ArrayPanel {
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w; canvas.height = h;
     }
-    const algoId = Number(this.el.querySelector(".sel-algo").value);
-    const algo   = algorithms.find(a => a.id === algoId);
-    const sorted = !!(algo?.meta?.sorted);
-    const forced = targetRaw !== "" ? Number(targetRaw) : null;
-    this._lastFrame = null;   // 前回の終了フレームを破棄（_drawPreviewOnCanvas と同じ理由）
-    this._previewCache = new ArrayCanvas(canvas).drawPreview(
-      sharedValues.length, sorted, forced, sharedValues, true, "cells"
-    );
+    this._lastFrame    = null;   // 前回の終了フレームを破棄（_drawPreviewOnCanvas と同じ理由）
+    this._previewFrame = null;   // 共有データで取り直す
+    this._fetchPreviewFrame(canvas, { sharedValues, targetRaw });
   }
 
   _drawPreviewOnCanvas(canvas) {
@@ -960,42 +959,93 @@ class ArrayPanel {
       return;
     }
 
+    // search / sort: 実行時の「最初のフレーム」をサーバーから取ってそのまま描く。
+    // こうすると、開始後の最初のフレームと枠（テキスト帯の高さ・オブジェクトの
+    // 数と weight）が完全に一致し、開始してもデータ構造の位置がずれない。
+    //   _previewFrame … 取得済みの最初のフレーム（リサイズ・テーマ切替はこれを
+    //                    描き直すだけで、サーバーに取りに行かない）
+    //   _previewCache … そのフレームで使ったデータ（start() が開始時に送る）
+    if (this._previewFrame) {
+      new ArrayCanvas(canvas).draw(this._previewFrame);
+    } else {
+      this._fetchPreviewFrame(canvas);
+    }
+  }
+
+  /**
+   * 実行時の最初のフレームをサーバー (/api/preview) から取得してプレビューに描く。
+   * start() と同じ body（data / target / data_condition）を送るので、取得した
+   * フレームは開始後の最初のフレームと同一になる（＝位置がずれない）。
+   * @param {HTMLCanvasElement} canvas
+   * @param {{sharedValues?: number[]|null, targetRaw?: string|null}} [o]
+   */
+  async _fetchPreviewFrame(canvas, { sharedValues = null, targetRaw = null } = {}) {
+    const algoId     = Number(this.el.querySelector(".sel-algo").value);
+    const algo       = algorithms.find(a => a.id === algoId);
+    const type       = algo?.meta?.type || "search";
     const sorted     = !!(algo?.meta?.sorted);
     const showTarget = (type === "search");
-    const tRaw       = this.el.querySelector(".inp-target").value.trim();
-    const forced     = (showTarget && tRaw !== "") ? Number(tRaw) : null;
-    // テープで整列するアルゴリズム（ノームソート (1テープ)・マージソート (3テープ)。meta.tape_preview）:
-    // 実行中の「初期データ」のコマ（algorithms.py の gnome_sort_tape / merge_sort_tape）と同じ枠で描く
-    //   max:   テープに載る最大の個数（先頭 max 個だけを描く）
-    //   cells: セルの大きさ（"arc" = 1 本のテープ / "plain" = 複数のテープ）
-    //   rows:  段の数（初期データは一番上の段。残りは空ける）
-    //   lines: 題名の行の後に続ける説明の行（説明の行数を初期データのコマとそろえる）
-    //   → 開始してテープの表示に切り替わっても、セルの大きさと縦の位置が変わらない
-    // (1 行目は「開始ボタンを押してください」の表示と重なるので空けておく)
-    const tp = algo?.meta?.tape_preview;
-    let opts = {};
-    if (tp) {
-      const N = Math.min(numItems, tp.max);
-      opts = {
-        tapeMax: tp.max, tapeCells: tp.cells, label: "初期データ",
-        extra: Array.from({ length: (tp.rows || 1) - 1 }, () => ({ type: "blank", weight: 1 })),
-        texts: [
-          { message: "", color: "white" },
-          { message: `${algo.name}  N = ${N}` + (numItems > N ? `   ※ ${numItems} 個中 先頭 ${N} 個` : ""),
-            color: "white" },
-          ...(tp.lines || []).map(m => ({ message: m, color: "cyan" })),
-        ],
-      };
+
+    // データを決める（リサイズでは _previewFrame を使い回すのでここには来ない）:
+    //   共有データ（全パネルへ適用）があればそれを、無ければ同じ個数のキャッシュ
+    //   を使い回し、どちらも無ければ新規にランダム生成する
+    const numItems = sharedValues ? sharedValues.length
+                   : (Number(this.el.querySelector(".sel-size").value) || 16);
+    const maxVal   = numItems >= 200 ? 999 : 99;
+    let values = sharedValues
+      ? [...sharedValues]
+      : (this._previewCache?.values?.length === numItems
+          ? [...this._previewCache.values]
+          : Array.from({ length: numItems }, () => Math.floor(Math.random() * maxVal) + 1));
+    if (sorted) values.sort((a, b) => a - b);
+
+    // target（search のみ）: 入力欄 → キャッシュ → ランダム、の順
+    let target = null;
+    if (showTarget) {
+      const tRaw = (targetRaw !== null)
+        ? targetRaw
+        : this.el.querySelector(".inp-target").value.trim();
+      if (tRaw !== "")                                    target = Number(tRaw);
+      else if (!sharedValues && this._previewCache?.target != null)
+                                                          target = this._previewCache.target;
+      else                                               target = values[Math.floor(Math.random() * values.length)];
     }
-    // リサイズ時など再描画でも同じデータを維持する:
-    // すでに同じ個数のプレビューが描かれていれば値と target を使い回す
-    const cachedVals = (this._previewCache?.values?.length === numItems)
-      ? this._previewCache.values : null;
-    const effectiveForced = (forced === null && cachedVals && this._previewCache?.target != null)
-      ? this._previewCache.target : forced;
-    this._previewCache = new ArrayCanvas(canvas).drawPreview(
-      numItems, sorted, effectiveForced, cachedVals, showTarget, "cells", opts
-    );
+
+    // start() と同じ body を組み立てる（開始後と同じ最初のフレームにするため）
+    const body = { algorithm_id: algoId, num_items: numItems };
+    if (type === "search") {
+      if (target != null) body.target = target;
+      body.data = values;
+    } else if (type === "sort") {
+      body.data_condition = Number(this.el.querySelector(".sel-condition").value);
+      body.data = values;
+    }
+
+    // start() が使うデータをここで確定しておく
+    this._previewCache = { values, target };
+
+    // フェッチ中に前のフレームが残らないよう、背景だけ先に塗る
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = _acTheme().canvasBg;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const req = (this._previewReq = (this._previewReq || 0) + 1);
+    try {
+      const res = await fetch("/api/preview", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify(body),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (req !== this._previewReq) return;   // 新しいプレビュー要求が来ていれば破棄
+      if (this.isRunning) return;             // 実行が始まっていたら描かない
+      this._previewFrame = data.frame;
+      const cv = this.el.querySelector(".array-canvas");   // 最新のキャンバスへ描く
+      new ArrayCanvas(cv).draw(this._previewFrame);
+    } catch (e) {
+      /* プレビュー失敗は無視（開始はできる） */
+    }
   }
 
   // ── スピード変換（目盛りはファイル先頭の _speedMult / _speedSec） ──
@@ -1261,7 +1311,7 @@ class ArrayPanel {
     this._lastFrame     = null;
     this._previewCache  = null;   // リセット時は新しいランダム配列を生成する
     this._frameCount    = 0;
-    this._drawPreview();
+    this._drawPreview(true);
   }
 
   // ── パネル削除 ───────────────────────────────────────────────

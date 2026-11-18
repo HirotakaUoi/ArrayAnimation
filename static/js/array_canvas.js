@@ -117,7 +117,7 @@ class ArrayCanvas {
   // ── メイン描画 ────────────────────────────────────────────────────
   draw(frame) {
     const { objects = [], texts = [], finished = false, found = null,
-            text_position = "top" } = frame;
+            text_position = "top", reserve_lines = 0 } = frame;
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.cw, this.ch);
 
@@ -125,11 +125,15 @@ class ArrayCanvas {
     ctx.fillStyle = _acTheme().canvasBg;
     ctx.fillRect(0, 0, this.cw, this.ch);
 
-    // テキストボックスの高さを先に計算し、オブジェクト領域と重ならないようにする
+    // テキストボックスの高さを先に計算し、オブジェクト領域と重ならないようにする。
+    // reserve_lines（サーバーが渡すアルゴリズムごとの最大行数）ぶんの帯を常に確保し、
+    // フレームによってテキストの行数が増減しても帯の高さを一定に保つ
+    //   → 下のデータ構造が上下に動かない（開始直後に「微妙にずれて戻る」のを防ぐ）
     const TEXT_LINE_H = 18;
     const pad  = 6;
-    const boxH = texts.length > 0 ? texts.length * TEXT_LINE_H + pad * 2 : 0;
-    const objTop = (texts.length > 0 && text_position !== "bottom") ? boxH : 0;
+    const bandLines = Math.max(texts.length, reserve_lines);
+    const boxH = bandLines > 0 ? bandLines * TEXT_LINE_H + pad * 2 : 0;
+    const objTop = (bandLines > 0 && text_position !== "bottom") ? boxH : 0;
     const objH   = this.ch - boxH;
 
     const nObjs = objects.length;
