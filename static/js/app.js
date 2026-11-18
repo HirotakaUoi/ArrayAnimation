@@ -333,6 +333,7 @@ function applyGlobalToAll() {
         panel._applySharedPreview(sharedValues, targetRaw);
       } else if (type === "sort") {
         el.querySelector(".sel-condition").value = condition;
+        panel._previewCache = null;   // 一括適用時は新しいデータを生成する
         panel._drawPreview();
       } else if (type === "string") {
         if (!sharedStr) sharedStr = panel._stringForShare();
@@ -727,10 +728,14 @@ class ArrayPanel {
     });
 
     q(".sel-algo").addEventListener("change", () => {
-      if (!this.isRunning) { this._updateParamVisibility(); this._drawPreview(); }
+      if (!this.isRunning) {
+        this._previewCache = null;   // アルゴリズム変更時は新しいデータを生成する
+        this._updateParamVisibility(); this._drawPreview();
+      }
     });
     q(".sel-size")     .addEventListener("change", () => {
       if (this.isRunning) return;
+      this._previewCache = null;   // データ数変更時は新しいデータを生成する
       // 文字列照合: ランダムの種類なら新しい長さで作り直す
       if (_algoType(q(".sel-algo").value) === "string" && _isRandomKind(this._strKind)) {
         this._regenString();
@@ -982,8 +987,14 @@ class ArrayPanel {
         ],
       };
     }
+    // リサイズ時など再描画でも同じデータを維持する:
+    // すでに同じ個数のプレビューが描かれていれば値と target を使い回す
+    const cachedVals = (this._previewCache?.values?.length === numItems)
+      ? this._previewCache.values : null;
+    const effectiveForced = (forced === null && cachedVals && this._previewCache?.target != null)
+      ? this._previewCache.target : forced;
     this._previewCache = new ArrayCanvas(canvas).drawPreview(
-      numItems, sorted, forced, null, showTarget, "cells", opts
+      numItems, sorted, effectiveForced, cachedVals, showTarget, "cells", opts
     );
   }
 
@@ -1246,9 +1257,10 @@ class ArrayPanel {
     this.el.classList.remove("finished");
     this._setStatus("待機中", "#888");
     this._setBtns({ start: true, pause: false, stop: false, reset: false });
-    this.arrayCanvas = null;
-    this._lastFrame  = null;
-    this._frameCount = 0;
+    this.arrayCanvas    = null;
+    this._lastFrame     = null;
+    this._previewCache  = null;   // リセット時は新しいランダム配列を生成する
+    this._frameCount    = 0;
     this._drawPreview();
   }
 
