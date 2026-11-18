@@ -151,6 +151,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("btn-reset-all")   .addEventListener("click", resetAll);
   document.getElementById("btn-sync-size")   .addEventListener("click", syncSize);
   document.getElementById("btn-apply-global").addEventListener("click", applyGlobalToAll);
+  _setupIntensityControl();
   addPanel();
   _setupHeaderFit();
 });
@@ -387,6 +388,31 @@ function _applyTheme(key) {
 function _setupThemeControls() {
   document.querySelectorAll(".theme-btn").forEach(btn => {
     btn.addEventListener("click", () => _applyTheme(btn.dataset.th));
+  });
+}
+
+// ===== 値の濃度表示 ================================================
+
+let _intensityOn = false;
+
+function _applyIntensity(on) {
+  _intensityOn = on;
+  setIntensityMode(on);
+  document.getElementById("btn-intensity").classList.toggle("btn-active", on);
+  document.querySelectorAll(".panel").forEach(el => {
+    const panel = el._panel;
+    if (!panel) return;
+    if (panel.arrayCanvas && panel._lastFrame) {
+      panel.arrayCanvas.draw(panel._lastFrame);
+    } else {
+      panel._drawPreview();
+    }
+  });
+}
+
+function _setupIntensityControl() {
+  document.getElementById("btn-intensity").addEventListener("click", () => {
+    _applyIntensity(!_intensityOn);
   });
 }
 

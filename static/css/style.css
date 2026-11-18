@@ -411,6 +411,14 @@ header h1 {
   opacity: 1 !important;
 }
 
+/* 濃度表示ボタン: ON のときにアクティブ色を付ける */
+.btn.btn-active {
+  background: #3a6a2a !important;
+  color: #ccffcc !important;
+  border-color: #55bb44 !important;
+  opacity: 1 !important;
+}
+
 /* 使い方（マニュアル）ボタン: マニュアルを別のタブで開くリンク（a 要素をボタンの見た目にする） */
 a.btn { text-decoration: none; }
 #btn-manual { margin-left: 8px; }

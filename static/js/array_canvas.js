@@ -68,6 +68,10 @@ let _acThemeKey = "bright";   // 初期テーマは明るめ（index.html の <b
 function _acTheme() { return AC_THEMES[_acThemeKey] ?? AC_THEMES.dark; }
 function setCanvasTheme(k) { _acThemeKey = k; }
 
+// 値の濃度表示 — セルの塗りつぶし色の明暗で値の大小を表す（青=小, 赤=大）
+let _intensityMode = false;
+function setIntensityMode(v) { _intensityMode = v; }
+
 // テープ（_drawTape）の余白。ARC_H・BOT_H は 1 本のテープ（reserve_arc）のときの値
 const TAPE_PAD = 6, TAPE_LBL_W = 64, TAPE_ARC_H = 24, TAPE_BOT_H = 34;
 // テープのセルの一辺の最小値。テープに載る最大の個数（32 個）が、初期のパネル幅（表示エリア 494px）で
@@ -389,6 +393,16 @@ class ArrayCanvas {
       ctx.restore();
     }
 
+    // 値の濃度表示: 数値配列の min/max を事前に計算
+    let _valRange = null;
+    if (_intensityMode) {
+      const nums = values.slice(0, nDraw).map(Number).filter(Number.isFinite);
+      if (nums.length > 1) {
+        const lo = Math.min(...nums), hi = Math.max(...nums);
+        if (hi > lo) _valRange = { lo, hi };
+      }
+    }
+
     // セル描画
     for (let i = 0; i < nDraw; i++) {
       const cx          = startX + i * cellW;
@@ -396,19 +410,28 @@ class ArrayCanvas {
       const hlColor     = highlights[String(i)];
 
       // 背景
+      ctx.fillStyle = _acTheme().cellBg;
+      ctx.fillRect(cx, cellY, cellW - 1, cellH);
+
       if (isWatchman) {
         ctx.fillStyle = "#3d2000";
         ctx.fillRect(cx, cellY, cellW - 1, cellH);
-      } else if (hlColor) {
-        ctx.fillStyle = _acTheme().cellBg;
-        ctx.fillRect(cx, cellY, cellW - 1, cellH);
-        ctx.save(); ctx.globalAlpha = 0.35;
-        ctx.fillStyle = hlColor;
-        ctx.fillRect(cx, cellY, cellW - 1, cellH);
-        ctx.restore();
       } else {
-        ctx.fillStyle = _acTheme().cellBg;
-        ctx.fillRect(cx, cellY, cellW - 1, cellH);
+        // 値の濃度オーバーレイ（青=小 → 赤=大）
+        if (_valRange && Number.isFinite(Number(values[i]))) {
+          const t = (Number(values[i]) - _valRange.lo) / (_valRange.hi - _valRange.lo);
+          ctx.save(); ctx.globalAlpha = 0.15 + 0.65 * t;  // 薄(小)→濃(大)
+          ctx.fillStyle = `hsl(220,70%,50%)`;              // 単色 青
+          ctx.fillRect(cx, cellY, cellW - 1, cellH);
+          ctx.restore();
+        }
+        // ハイライトオーバーレイ（濃度の上に重ねて状態を明示）
+        if (hlColor) {
+          ctx.save(); ctx.globalAlpha = 0.35;
+          ctx.fillStyle = hlColor;
+          ctx.fillRect(cx, cellY, cellW - 1, cellH);
+          ctx.restore();
+        }
       }
 
       // ボーダー
